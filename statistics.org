@@ -1,0 +1,172 @@
+* Statistics
+
+** Inspecting the Data
+
+#+BEGIN_SRC clojure
+(defn ex-1-1 []
+  (i/col-names (load-data :uk)))
+
+;; extract column
+(i/$ "Election Year" (load-data :uk))
+
+;; get unique values
+(->> (load-data :uk)
+     (i/$ "Election Year")
+     (distinct))
+
+;; tally
+(->> (load-data :uk)
+     (i/$ "Election Year")
+     (frequencies))
+#+END_SRC
+
+** Data Scrubbing
+
+We've seen that filtering columns can be done with incanter's i/$ function. For filtering rows of data, we can use i/query-dataset
+
+#+BEGIN_SRC clojure
+;; let incanter know which rows we want by passing a clj map of col names and predicates
+(-> (load-data :uk)
+    (i/query-dataset {"Election Year" {:$eq nil}}))
+#+END_SRC
+
+The query is a map of column names to predicates, and each predicate itself is a map of operator to operand.
+
+Query operators include:
+
+- :$gt
+- :$lt
+- :$gte
+- :$lte
+- :$eq
+- :$ne
+- :$in
+- :$nin
+- :$fn
+
+#+BEGIN_SRC clojure
+(->> (load-data :uk)
+     (i/$where {"Election Year" {:$eq nil}})
+     (i/to-map))
+
+;; the nil value was a summary total and ought to be removed from the data
+(->> (load-data :uk)
+     (i/$where {"Election Year" {:$ne nil}}))
+
+(defmethod load-data :uk-scrubbed [_]
+  (->> (load-data :uk)
+     (i/$where {"Election Year" {:$ne nil}})))
+#+END_SRC
+
+** Descriptive Statistics
+
+#+BEGIN_SRC clojure
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (count))
+
+(defn mean [xs]
+  (/ (reduce + xs)
+     (count xs)))
+
+(defn median [xs]
+  (let [n (count xs)
+        mid (int (/ n 2))]
+    (if (odd? n)
+      (nth (sort xs) mid)
+      (->> (sort xs)
+           (drop (dec mid))
+           (take 2)
+           (mean)))))
+
+(defn variance [xs]
+  (let [x-bar (mean xs)
+        n (count xs)
+        sq-dev (fn [x] (i/sq (- x x-bar)))]
+    (mean (map sq-dev xs))))
+
+(defn variance-4
+  [xs]
+  (let [xbar (mean xs)
+        sq-dev (fn [x] (i/sq (- x xbar)))]
+    (mean (map sq-dev xs))))
+
+(defn std-dev [xs]
+  (i/sqrt (variance xs)))
+
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (mean))
+
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (median))
+
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (variance))
+
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (std-dev))
+#+END_SRC
+
+$s^2 = \frac{1}{n}\sum_{i = 1}^n (x_i - \bar{x})^2$
+
+** Quantiles
+
+#+BEGIN_SRC clojure
+(defn quantile-2
+  [q xs]
+  (let [n (dec (count xs))
+        i (-> (* n q)
+              (+ 1/2)
+              (int))]
+    (nth (sort xs) i)))
+
+(let [xs (->> (load-data :uk-scrubbed)
+              (i/$ "Electorate"))
+      f (fn [q] (quantile q xs))]
+  (map f [0 1/4 1/2 3/4 1]))
+
+(s/quantile [0 1 2 3 4 6 7 8 9 10])
+#+END_SRC
+
+** Binning Data
+
+#+BEGIN_SRC clojure
+(defn bin2 [n-bins xs]
+  (let [min-x (apply min xs)
+        max-x (apply max xs)
+        range-x (- max-x min-x)
+        bin-fn (fn [x]
+                 (-> x
+                     (- min-x)
+                     (/ range-x)
+                     (* n-bins)
+                     (int)
+                     (min (dec n-bins))))]
+    (map bin-fn xs)))
+
+(bin 5 (range 15))
+
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (bin 5)
+     (frequencies))
+#+END_SRC
+
+** Histograms
+
+#+BEGIN_SRC clojure
+(def uk-electorate
+  (->> (load-data :uk-scrubbed)
+       (i/$ "Electorate")))
+
+(-> uk-electorate
+    (c/histogram :nbins 20
+                 :x-label "UK Electorate")
+    (i/view))
+#+END_SRC
+
+** The Central Limit Theorem
