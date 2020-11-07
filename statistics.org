@@ -170,3 +170,98 @@ $s^2 = \frac{1}{n}\sum_{i = 1}^n (x_i - \bar{x})^2$
 #+END_SRC
 
 ** The Central Limit Theorem
+
+#+BEGIN_SRC clojure
+(let [xs (->> (repeatedly rand)
+              (take 10000))]
+  (-> (c/histogram xs
+                   :x-label "Uniform Distribution"
+                   :nbins 20)
+      (i/view)))
+
+(let [xs (->> (repeatedly rand)
+              (partition 10)
+              (map mean)
+              (take 10000))]
+  (-> (c/histogram xs
+                   :x-label "Distribution of Means"
+                   :nbins 20)
+      (i/view)))
+
+(let [distribution (d/normal-distribution)
+      xs (->> (repeatedly #(d/draw distribution))
+              (take 10000))]
+  (-> (c/histogram xs
+                   :x-label "Normal Distribution"
+                   :nbins 20)
+      (i/view)))
+#+END_SRC
+
+** Generating Distributions
+
+#+BEGIN_SRC clojure
+(defn honest-baker
+  [mean sd]
+  (let [distribution (d/normal-distribution mean sd)]
+    (repeatedly #(d/draw distribution))))
+
+(defn dishonest-baker
+  [mean sd]
+  (let [distribution (d/normal-distribution mean sd)]
+    (->> (repeatedly #(d/draw distribution))
+         (partition 13)
+         (map (partial apply max)))))
+
+(map (partial apply max)
+     (partition 2 [1 2 3 4 5 6 7 8 9 10]))
+
+;; honest baker
+(-> (take 10000 (honest-baker 1000 30))
+    (c/histogram :x-label "Honest Baker"
+                 :nbins 25)
+    (i/view))
+
+(-> (take 10000 (dishonest-baker 950 30))
+    (c/histogram :x-label "Dishonest Baker"
+                 :nbins 25)
+    (i/view))
+#+END_SRC
+
+** Skewness
+
+#+BEGIN_SRC clojure
+(let [weights (take 10000 (dishonest-baker 950 30))]
+  {:mean (mean weights)
+   :median (median weights)
+   :skewness (s/skewness weights)})
+#+END_SRC
+
+** Quantile Quantile Plots
+
+Plotting the quantiles of your data against the quantiles of the normal distribution allows us to see how our measured data compares against the theoretical distribution. Plots such as this are called QQ plots, and they provide an easy and intuitive way of determining normality.
+
+#+BEGIN_SRC clojure
+(->> (honest-baker 1000 30)
+     (take 10000)
+     (c/qq-plot)
+     (i/view))
+
+(->> (dishonest-baker 1000 30)
+     (take 10000)
+     (c/qq-plot)
+     (i/view))
+#+END_SRC
+
+** Box Plots
+
+#+BEGIN_SRC clojure
+(-> (c/box-plot (->> (honest-baker 1000 30)
+                     (take 10000))
+                :legend true
+                :y-label "Loaf Weight (g)"
+                :series-label "Honest Baker")
+    (c/add-box-plot (->> (dishonest-baker 950 30)
+                         (take 10000))
+                    :series-label "Dishonest Baker")
+    (i/view))
+#+END_SRC
