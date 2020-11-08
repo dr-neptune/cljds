@@ -265,3 +265,84 @@ Plotting the quantiles of your data against the quantiles of the normal distribu
                     :series-label "Dishonest Baker")
     (i/view))
 #+END_SRC
+
+** Cumulative Distribution Functions
+
+#+BEGIN_SRC clojure
+(let [sample-honest (->> (honest-baker 1000 30)
+                         (take 10000))
+      ecdf-honest (s/cdf-empirical sample-honest)
+      sample-dishonest (->> (dishonest-baker 950 30)
+                            (take 10000))
+      ecdf-dishonest (s/cdf-empirical sample-dishonest)]
+  (-> (c/xy-plot sample-honest (map ecdf-honest sample-honest)
+                 :x-label "Loaf Weight"
+                 :y-label "Probability"
+                 :legend true
+                 :series-label "Honest Baker")
+      (c/add-lines sample-dishonest (map ecdf-dishonest sample-dishonest)
+                   :series-label "Dishonest Baker")
+      (i/view)))
+#+END_SRC
+
+** Visualizing Electorate Data
+
+#+BEGIN_SRC clojure
+(let [electorate (->> (load-data :uk-scrubbed)
+                      (i/$ "Electorate"))
+      ecdf (s/cdf-empirical electorate)
+      fitted (s/cdf-normal electorate
+                           :mean (s/mean electorate)
+                           :sd (s/sd electorate))]
+  (-> (c/xy-plot electorate fitted
+                 :x-label "Electorate"
+                 :y-label "Probability"
+                 :series-label "Fitted"
+                 :legend true)
+      (c/add-lines electorate (map ecdf electorate)
+                   :series-label "Empirical")
+      (i/view)))
+
+;; compare our distribution against the theoretical normal distribution
+(->> (load-data :uk-scrubbed)
+     (i/$ "Electorate")
+     (c/qq-plot)
+     (i/view))
+#+END_SRC
+
+** Adding Derived Columns
+
+#+BEGIN_SRC clojure
+(defmethod load-data :uk-victors [_]
+  (->> (load-data :uk-scrubbed)
+       (i/$where {:Con {:$fn number?}
+                  :LD {:$fn number?}})
+       (i/add-derived-column :victors [:Con :LD] +)
+       (i/add-derived-column :victors-share [:victors :Votes] /)
+       (i/add-derived-column :turnout [:Votes :Electorate] /)))
+
+(->> (load-data :uk-victors)
+     (i/$ :victors-share)
+     (c/qq-plot)
+     (i/view))
+
+;; see data that isn't a number
+(->> (load-data :uk-scrubbed)
+     (i/$where #(not-any? number? [(% "Con")(% "LD")]))
+     (i/$ [:Region :Electorate :Con :LD]))
+#+END_SRC
+
+** Comparative Visualizations of Electorate Data
+
+#+BEGIN_SRC clojure
+(defmethod load-data :ru [_]
+  (i/conj-rows (-> (io/resource "Russia2011_1of2.xls")
+                   (str)
+                   (xls/read-xls))
+               (-> (io/resource "Russia2011_2of2.xls")
+                   (str)
+                   (xls/read-xls))))
+
+(-> (load-data :ru)
+    (i/col-names))
+#+END_SRC
