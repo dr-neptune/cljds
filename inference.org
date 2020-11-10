@@ -1,0 +1,39 @@
+#+TITLE: Inference
+
+In this chapter, we consider statistical inference: how can we go beyond simply describing the samples of data and instead describe the population from which they were sampled.
+
+* Load and Inspect the Data
+
+#+BEGIN_SRC clojure
+(defn load-data [file]
+  (-> (io/resource file)
+      (io/read-dataset :header true
+                       :delim \tab)))
+
+;; load the data
+(-> (load-data "dwell-times.tsv")
+    (i/view))
+
+;; visualize the dwell times
+(-> (i/$ :dwell-time (load-data "dwell-times.tsv"))
+    (c/histogram :x-label "Dwell Time (s)"
+                 :nbins 50)
+    (i/view))
+
+;; try it with a log scale
+(-> (i/$ :dwell-time (load-data "dwell-times.tsv"))
+    (c/histogram :x-label "Dwell Time (s)"
+                 :nbins 20)
+    (c/set-axis :y (c/log-axis :label "Log Frequency"))
+    (i/view))
+#+END_SRC
+
+* The Exponential Distribution
+
+#+BEGIN_SRC clojure
+(let [dwell-times (->> (load-data "dwell-times.tsv")
+                       (i/$ :dwell-time))]
+  (println "Mean:   " (s/mean dwell-times))
+  (println "Median: " (s/median dwell-times))
+  (println "SD:     " (s/sd dwell-times)))
+#+END_SRC
