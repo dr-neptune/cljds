@@ -345,4 +345,115 @@ Plotting the quantiles of your data against the quantiles of the normal distribu
 
 (-> (load-data :ru)
     (i/col-names))
+
+;; along with a dataset, i/rename-cols expects a map whose keys are the current colnames with values corresponding to the desired new name
+(defmethod load-data :ru-victors [_]
+  (->> (load-data :ru)
+       (i/rename-cols
+        {"Number of Voters Included in Voters List" :electorate
+         "Number of Valid Ballots" :valid-ballots
+         "United Russia" :victors})
+       (i/add-derived-column :victors-share
+                             [:victors :valid-ballots] i/safe-div)
+       (i/add-derived-column :turnout
+                             [:valid-ballots :electorate] /)))
+
+(defmethod load-data :ru-victors [_]
+  (->> (load-data :ru)
+       (i/rename-cols
+        {"Number of voters included in voters list" :electorate
+         "Number of valid ballots" :valid-ballots
+         "United Russia" :victors})
+       (i/add-derived-column :victors-share
+                             [:victors :valid-ballots] i/safe-div)
+       (i/add-derived-column :turnout
+                             [:valid-ballots :electorate] /)))
+
+#+END_SRC
+
+** Visualizing the Russian Election Data
+
+#+BEGIN_SRC clojure
+(-> (->> (load-data :ru-victors)
+         (i/$ :turnout))
+    (c/histogram :x-label "Russian Turnout"
+                 :nbins 20)
+    (i/view))
+
+(->> (load-data :ru-victors)
+     (i/$ :turnout)
+     (c/qq-plot)
+     (i/view))
+#+END_SRC
+
+** Comparative Visualizations
+
+We wish to compare the distributions of electorate data between the UK and Russia.
+
+We could try to plot both datasets on a histogram, but this would be a bad idea for 2 reasons:
+
+- The sizes of the voting districts, and therefore the means of the distributions, are very different
+- The number of voting districts overall is so different, so the histogram bars would have different heights
+
+*** Probability Mass Functions
+
+The PMF plots the probability that a number drawn from a distribution will be exactly equal to a given value. Since this maps to $[0, 1]$, it ensures that the area under our plots will be comparable between datasets. This doesn't fix our problem with the sizes of the voting districts though -- for that we can use normalization.
+
+#+BEGIN_SRC clojure
+(defn as-pmf2 [bins]
+  (let [histogram (frequencies bins)
+        total (reduce + (vals histogram))]
+    (->> histogram
+         (map (fn [[k v]]
+                [k (/ v total)]))
+         (into {}))))
+
+;; normalize both UK and Russia data and plot it side by side on the same axes
+(let [n-bins 40
+      uk (->> (load-data :uk-victors)
+              (i/$ :turnout)
+              (bin n-bins)
+              (as-pmf))
+      ru (->> (load-data :ru-victors)
+              (i/$ :turnout)
+              (bin n-bins)
+              (as-pmf))]
+  (-> (c/xy-plot (keys uk) (vals uk)
+                 :series-label "UK"
+                 :legend true
+                 :x-label "Turnout Bins"
+                 :y-label "Probability")
+      (c/add-lines (keys ru) (vals ru)
+                   :series-label "Russia")
+      (i/view)))
+#+END_SRC
+
+*** Scatter Plots
+
+#+BEGIN_SRC clojure
+;; for UK
+(let [data (load-data :uk-victors)]
+  (-> (c/scatter-plot (i/$ :turnout data)
+                      (i/$ :victors-share data)
+                      :x-label "Turnout"
+                      :y-label "Victor's Share")
+      (i/view)))
+
+;; for Russia
+(let [data (load-data :ru-victors)]
+  (-> (c/scatter-plot (i/$ :turnout data)
+                      (i/$ :victors-share data)
+                      :x-label "Turnout"
+                      :y-label "Victor's Share")
+      (i/view)))
+
+;; with scatter transparency
+(let [data (-> (load-data :ru-victors)
+               (s/sample :size 10000))]
+  (-> (c/scatter-plot (i/$ :turnout data)
+                      (i/$ :victors-share data)
+                      :x-label "Turnout"
+                      :y-label "Victor Share")
+      (c/set-alpha 0.05)
+      (i/view)))
 #+END_SRC
