@@ -37,3 +37,149 @@ In this chapter, we consider statistical inference: how can we go beyond simply 
   (println "Median: " (s/median dwell-times))
   (println "SD:     " (s/sd dwell-times)))
 #+END_SRC
+
+* The Distribution of Daily Means
+
+#+BEGIN_SRC clojure
+(defn with-parsed-date2 
+  [data]
+  (i/transform-col data :date (comp t/to-local-date
+                                    f/parse)))
+
+(defn filter-weekdays2
+  [data]
+  (i/$where {:date {:$fn p/weekday?}}
+            data))
+
+(defn mean-dwell-times-by-date2
+  [data]
+  (i/$rollup :mean :dwell-time :date data))
+
+(defn daily-mean-dwell-times2
+  [data]
+  (->> (with-parsed-date data)
+       (filter-weekdays)
+       (mean-dwell-times-by-date)))
+
+(let [means (->> (load-data "dwell-times.tsv")
+                 (daily-mean-dwell-times)
+                 (i/$ :dwell-time))]
+  (println "Mean:" (s/mean means))
+  (println "Median:" (s/median means))
+  (println "SD:" (s/sd means)))
+
+(let [means (->> (load-data "dwell-times.tsv")
+                 (daily-mean-dwell-times)
+                 (i/$ :dwell-time))]
+  (-> (c/histogram means
+                   :x-label "Daily Mean Dwell Time (s)"
+                   :nbins 20)
+      (i/view)))
+#+END_SRC
+
+* The Central Limit Theorem
+   
+#+BEGIN_SRC clojure
+(def means-out
+  (->> (load-data "dwell-times.tsv")
+       (daily-mean-dwell-times)
+       (i/$ :dwell-time)))
+
+(let [mean (s/mean means-out)
+      sd (s/sd means-out)
+      pdf (fn [x]
+            (s/pdf-normal x :mean mean :sd sd))]
+    (-> (c/histogram means-out
+                 :x-label "Daily Mean Dwell Time (s)"
+                 :nbins 20
+                 :density true)
+    (c/add-function pdf 80 100)
+    (i/view)))
+#+END_SRC
+
+* Standard Error
+
+$\mathrm{SE} = \frac{\sigma_x}{\sqrt{n}}$
+
+#+BEGIN_SRC clojure
+(defn standard-deviation
+  [xs]
+  (Math/sqrt (count xs)))
+
+(defn standard-error
+  [xs]
+  (/ standard-deviation
+     (Math/sqrt (count xs))))
+
+(let [may-1 (f/parse-local-date "2015-05-01")]
+  (->> (load-data "dwell-times.tsv")
+       (with-parsed-date)
+       (filtered-times {:date {:$eq may-1}})
+       (standard-error)))
+#+END_SRC
+
+* Confidence Intervals
+
+#+BEGIN_SRC clojure
+(defn confidence-interval
+  [p xs]
+  (let [x-bar (s/mean xs)
+        se (standard-error xs)
+        z-crit (s/quantile-normal (- 1 (/ (- 1 p) 2)))]
+    [(- x-bar (* se z-crit))
+     (+ x-bar (* se z-crit))]))
+
+(let [may-1 (f/parse-local-date "2015-05-01")]
+  (->> (load-data "dwell-times.tsv")
+       (with-parsed-date)
+       (filtered-times {:date {:$eq may-1}})
+       (confidence-interval 0.95)))
+#+END_SRC
+
+* Sample Comparisons
+
+#+BEGIN_SRC clojure
+(let [times (->> (load-data "campaign-sample.tsv")
+                 (i/$ :dwell-time))]
+  (println "n:      " (count times))
+  (println "mean:   " (s/mean times))
+  (println "median: " (s/median times))
+  (println "SD:     " (format "%.2f" (s/sd times)))
+  (println "SE:     " (format "%.2f" (standard-error times))))
+
+;; get 95% CI
+(let [times (->> (load-data "campaign-sample.tsv")
+                 (i/$ :dwell-time))]
+  (map (partial format "%.2f")
+       (confidence-interval 0.95 times)))
+#+END_SRC
+
+* Visualizing Different Populations
+
+#+BEGIN_SRC clojure
+(let [means (->> (load-data "dwell-times.tsv")
+                 (with-parsed-date)
+                 (mean-dwell-times-by-date)
+                 (i/$ :dwell-time))]
+  (-> (c/histogram means
+                   :x-label "Daily mean dwell time unfiltered (s)"
+                   :nbins 20)
+      (i/view)))
+
+(let [weekend-times (->> (load-data "dwell-times.tsv")
+                         (with-parsed-date)
+                         (i/$where {:date {:$fn p/weekend?}})
+                         (i/$ :dwell-time))]
+  (println "n:      " (count weekend-times))
+  (println "mean:   " (format "%.2f" (s/mean weekend-times)))
+  (println "median: " (s/median weekend-times))
+  (println "SD:     " (format "%.2f" (s/sd weekend-times)))
+  (println "SE:     " (format "%.2f" (standard-error weekend-times))))
+#+END_SRC
+
+* Performing a z-test
+
+#+BEGIN_SRC clojure
+;; just do it
+#+END_SRC
+
