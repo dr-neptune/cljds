@@ -179,7 +179,121 @@ $\mathrm{SE} = \frac{\sigma_x}{\sqrt{n}}$
 
 * Performing a z-test
 
+  With z-testing, we have the option of comparing 2 samples. Since we have 2 samples, we also have 2 standard errors. The z-test is performed against the pooled standard error, which is the square root of the sum of the variances divided by the sample sizes.
+
+  $\sigma_{\bar{ab}} = \sqrt{\frac{\sigma_a^2}{n_a} + \frac{\sigma_b^2}{n_b}}$
+  
 #+BEGIN_SRC clojure
-;; just do it
+(defn pooled-standard-error
+  [a b]
+  (i/sqrt (+ (/ (i/sq (standard-deviation a))
+                (count a))
+             (/ (i/sq (standard-deviation b))
+                (count b)))))
 #+END_SRC
+
+To determine if the difference we see is unexpectedly large, we can take the ratio of the observed difference between the means over the pooled standard error.
+
+$z = \frac{\bar{a} - \bar{b}}{\sigma_{\bar{ab}}}$
+
+#+BEGIN_SRC clojure
+(defn z-stat
+  [a b]
+  (-> (- (mean a)
+         (mean b))
+      (/ (pooled-standard-error a b))))
+#+END_SRC
+
+The ratio z captures how much the means differ relative to the amount we would expect given the standard error. The z-statistic therefore tells us how many standard errors apart the means are. Since the standard error has a normal probability distribution, we can associate this difference with a probability by looking up the z-statistic in the normal CDF:
+
+#+BEGIN_SRC clojure
+(defn z-test
+  [a b]
+  (s/cdf-normal (z-stat a b)))
+
+;; compare performance of two sites 
+(let [data (->> (load-data "new-site.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      a (get data 0)
+      b (get data 1)]
+  (println "a n:" (count a)
+           "\nb n:" (count b)
+           "\nz-stat:" (z-stat a b)
+           "\np-value:" (z-test a b)))
+#+END_SRC
+
+Unfortunately, our new site sample only has 16 visitors, and samples this small invalidate the assumption that the standard error is normally distributed.
+
+* Student's t-distribution
+
+While the normal distribution is completely described by $\mu$ and $\sigma$, the t-distribution is describe by only one parameter: the degrees of freedom. The larger the degrees of freedom, the closer the t-distribution resembles the normal distribution with a mean of 0 and a standard deviation of 1. As the $D_f$ increases, the distribution becomes wider with tails that are fatter than the normal distribution.
+
+While using the t-distribution, we look up the t-statistic: $t = \frac{\bar{a} - \bar{b}}{S_{\bar{ab}}}$
+
+where $S_{\bar{ab}}$ is the pooled standard error. For the t-test, we write the pooled standard error as the square root of the sum of the standard errors:
+
+$S_{\bar{ab}} = \sqrt{S_{\bar{a}}^2 + S_{\bar{b}}^2}$
+
+#+BEGIN_SRC clojure
+;; pooled standard error
+(defn pooled-standard-error
+  [a b]
+  (i/sqrt (+ (i/sq (standard-error a))
+             (i/sq (standard-error b)))))
+
+;; in practice, the calculation of a t-statistic is the same as the calculation of a z-statistic
+(def t-stat z-stat)
+
+(let [data (->> (load-data "new-site.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      a (get data 0)
+      b (get data 1)]
+  (t-stat a b))
+#+END_SRC
+
+The difference between the two statistics is conceptual rather than algorithmmic -- the z-statistic is only applicable when the samples follow a normal distribution.
+
+* Performing the t-test
+
+#+BEGIN_SRC clojure
+(defn t-test
+  [a b]
+  (let [df (+ (count a)
+              (count b)
+              -2)]
+    (- 1 (s/cdf-t (i/abs (t-stat a b)) :df df))))
+
+(let [data (->> (load-data "new-site.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      a (get data 0)
+      b (get data 1)]
+  (t-test a b))
+#+END_SRC
+
+* Two-Tailed Tests
+
+Tests where we look only for a significant increase or decrease in quantity are called one-tailed tests and are generally frowned upon except in cases where a change in the opposite direction would be impossible. The name comes from the fact that a one-tailed test allocates all of $\alpha$ to a single tail of the distribution. By not testing the other direction, the test has more power to reject the null hypothesis in a particular direction and lowers the threshold by which we would judge a result as significant.
+
+A more correct approach would be to entertain the possibility that the new site could realistically be worse than the existing site, allocating $\alpha$ to both tails of the distribution.
+
+#+BEGIN_SRC clojure
+;; two sample t-test
+(let [data (->> (load-data "new-site.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      a (get data 0)
+      b (get data 1)]
+  (clojure.pprint/pprint (s/t-test a :y b)))
+#+END_SRC
+
+* One-sample t-test
+
+
 
