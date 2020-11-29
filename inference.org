@@ -295,5 +295,283 @@ A more correct approach would be to entertain the possibility that the new site 
 
 * One-sample t-test
 
+#+BEGIN_SRC clojure
+(let [data (->> (load-data "new-site.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      b (get data 1)]
+  (clojure.pprint/pprint (s/t-test b :mu 90)))
+#+END_SRC
 
+* Resampling
 
+#+BEGIN_SRC clojure
+(let [data (->> (load-data "new-site.tsv")
+                (i/$where {:site {:$eq 1}})
+                (i/$ :dwell-time))]
+  (-> (s/bootstrap data s/mean :size 10000)
+      (c/histogram :nbins 20
+                   :x-label "Bootstrapped mean dwell times (s)")
+      (i/view)))
+#+END_SRC
+
+* Testing Multiple Designs
+
+The team generates 20 different designs.
+
+* Calculating Sample Means
+
+#+BEGIN_SRC clojure
+;; get mean dwell times for each different site
+(->> (i/transform-col (load-data "multiple-sites.tsv")
+                      :dwell-time float)
+     (i/$rollup :mean :dwell-time :site)
+     (i/$order :dwell-time :desc)
+     (i/view))
+
+;; test out each of the site designs to see if any generate a statistically significant result
+(let [data (->> (load-data "multiple-sites.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      alpha 0.05]
+  (doseq [[site-a times-a] data
+          [site-b times-b] data
+          :when (> site-a site-b)
+          :let [p-val (-> (s/t-test times-a :y times-b)
+                          (:p-value))]]
+    (when (< p-val alpha)
+      (println site-b "and" site-a "are significantly different:" (format "%.3f" p-val)))))
+#+END_SRC
+
+This repeatedly testing invalidates the t-tests.
+
+* Multiple Comparisons
+
+The fact that with repeated trials, we increase the probability of discovering a significant effect is called the multiple comparisons problem. In general, we would we demand a more significant effect by lowering the $\alpha$ from 0.05 to 0.01.
+
+* jStat
+
+  As CLJS compiles to javascript, we can't make use of libraries that have Java dependencies. A non-java alternative to incanter is jStat. The jstat.min.js file has been downloaded to the resources/js/vendor directory. The file is loaded in the main body of index.html.
+
+#+BEGIN_SRC clojure
+(defn randexp
+  [lambda]
+  (js/jStat.exponential.sample lambda))
+
+(defn exponential-distribution
+  [lambda]
+  (repeatedly #(randexp lambda)))
+#+END_SRC
+
+* B1
+
+#+BEGIN_SRC clojure
+(defn sample-histograms
+  [sample-a sample-b]
+  (-> (c/histogram sample-a :x-axis [0 200] :bins 20)
+      (c/add-histogram sample-b)
+      (svg/as-svg :width 550 :height 400)))
+#+END_SRC
+
+* Plotting Probability Densities
+
+#+BEGIN_SRC clojure
+(defn pdf-t
+  [t & {:keys [df]}]
+  (js/jStat.studentt.pdf t df))
+
+(defn t-statistic
+  [test {:keys [mean n sd]}]
+  (/ (- mean test)
+     (/ sd (Math/sqrt n))))
+
+(defn probability-density
+  [sample alpha]
+  (let [mu (mean sample)
+        sd (standard-deviation sample)
+        n (count sample)]
+    (fn [x]
+      (let [df (dec (count sample))
+            t-crit (threshold-t 2 df alpha)
+            t-stat (t-statistic x {:mean mu
+                                   :sd sd
+                                   :n n})]
+        (if (< (Math/abs t-stat) t-crit)
+          (pdf-t t-stat :df df)
+          0)))))
+
+(defn sample-means
+  [sample-a sample-b alpha]
+  (-> (c/function-area-plot (probability-density sample-a alpha)
+                            :x-axis [0 200])
+      (c/add-function (probability-density sample-b alpha))
+      (svg/as-svg :width 550 :height 250)))
+#+END_SRC
+
+* State and Reagent
+
+* Updating State
+
+  #+BEGIN_SRC clojure
+;; update state in a reagent atom
+(defn update-sample
+  [{:keys [mean-a mean-b sample-size]
+    :as state}]
+  (let [sample-a (->> (float (/ 1 mean-a))
+                      (exponential-distribution)
+                      (take sample-size))
+        sample-b (->> (float (/ 1 mean-b))
+                      (exponential-distribution)
+                      (take sample-size))]
+    (-> state
+        (assoc :sample-a sample-a
+               :sample-b sample-b
+               :sample-mean-a (int (mean sample-a))
+               :sample-mean-b (int (mean sample-b))))))
+
+(defn update-sample!
+  [state]
+  (swap! state update-sample))
+#+END_SRC
+
+* The Bonferroni Correction
+
+  This adjusts our alpha level for our tests. It divides our desired alpha by the number of tests we are performing.
+
+  For k tests, we have $\alpha = \frac{0.05}{k}$.
+
+  #+BEGIN_SRC clojure
+(let [data (->> (load-data "multiple-sites.tsv")
+                (:rows)
+                (group-by :site)
+                (map-vals (partial map :dwell-time)))
+      alpha (/ 0.05 (count data))]
+  (doseq [[site-a times-a] data
+          [site-b times-b] data
+          :when (> site-a site-b)
+          :let [p-val (-> (s/t-test times-a :y times-b)
+                          (:p-value))]]
+    (when (< p-val alpha)
+      (println site-b "and" site-a "are significantl different:" (format "%.3f" p-val)))))
+#+END_SRC
+
+* The F-Statistic
+
+The test statistic that represents the ratio of the variance within and between the groups is called the F-statistic. The closer the F-statistic is to 1, the more alike the two variances are.
+
+$F = \frac{S_b^2}{S_w^2}$
+
+where $S_b^2$ is the variance between the groups and $S_w^2$ is the variance within the groups.
+
+The variance within for an F-test is calculated as the mean squared deviation from the mean. We calculate this as the sum of squared deviations from the mean divided by the first degree of freedom.
+
+For example, if there are $k$ groups, each with a mean of $\bar{x_k}$, we could calculate the variance within like this:
+
+$S_w^2 = \frac{SSW}{df1} = \frac{\sum_{jk} (x_{jk} - \bar{x_k})^2}{(k - 1)}$
+
+where SSW represents the sum of squares within and $x_{jk}$ represents the value of the $j^{th}$ element in group k.
+
+#+BEGIN_SRC clojure
+(defn ssw
+  [groups]
+  (->> (map s/sum-of-square-devs-from-mean groups)
+       (reduce +)))
+
+(defn sst
+  [groups]
+  (->> (apply concat groups)
+       (s/sum-of-square-devs-from-mean)))
+
+(defn ssb
+  [groups]
+  (- (sst groups)
+     (ssw groups)))
+
+(defn f-stat
+  [groups df1 df2]
+  (let [msb (/ (ssb groups) df1)
+        msw (/ (ssw groups) df2)]
+    (/ msb msw)))
+#+END_SRC
+
+Now that we can calculate the F-statistic from our groups, we are ready to use it in an F-test. 
+
+* The F-test
+
+As with all of the hypothesis tests we have looked at in this chapter, once we have a statistic and a distribution, we simple need to pick a value of $\alpha$ and see if our data has exceeded the critical value for the test. 
+  
+#+BEGIN_SRC clojure
+;; to run an F-test on 20 different groups, we need to implement our own F-test function
+(defn f-test
+  [groups]
+  (let [n (count (apply concat groups))
+        m (count groups)
+        df1 (- m 1)
+        df2 (- n m)
+        f-stat (f-stat groups df1 df2)]
+    (s/cdf-f f-stat :df1 df1 :df2 df2 :lower-tail? false)))
+
+(let [grouped (->> (load-data "multiple-sites.tsv")
+                   (:rows)
+                   (group-by :site)
+                   (vals)
+                   (map (partial map :dwell-time)))]
+  (f-test grouped))
+
+;; visualize distributions of each site side by side
+(let [grouped (->> (load-data "multiple-sites.tsv")
+                   (:rows)
+                   (group-by :site)
+                   (sort-by first)
+                   (map second)
+                   (map (partial map :dwell-time)))
+      box-plot (c/box-plot (first grouped)
+                           :x-label "Site Number"
+                           :y-label "Dwell Time (s)")
+      add-box (fn [chart dwell-times]
+                (c/add-box-plot chart dwell-times))]
+  (-> (reduce add-box box-plot (rest grouped))
+      (i/view)))
+
+;;
+(let [data (load-data "multiple-sites.tsv")
+      site-0 (->> (i/$where {:site {:$eq 0}} data)
+                  (i/$ :dwell-time))
+      site-10 (->> (i/$where {:site {:$eq 10}} data)
+                   (i/$ :dwell-time))]
+  (first (s/t-test site-10 :y site-0)))
+
+;;
+(let [data (load-data "multiple-sites.tsv")
+      site-0 (->> (i/$where {:site {:$eq 0}} data)
+                  (i/$ :dwell-time))
+      site-6 (->> (i/$where {:site {:$eq 10}} data)
+                   (i/$ :dwell-time))]
+  (first (s/t-test site-6 :y site-0)))
+#+END_SRC
+
+* Cohen's d
+
+Cohen's d is an adjustment that can be applied to see whether the difference we have observed is not just statistically significant, but actually large.
+
+$d = \frac{\bar{a} - \bar{b}}{S_{ab}}$
+
+#+BEGIN_SRC clojure
+(defn pooled-standard-deviation
+  [a b]
+  (i/sqrt (+ (i/sq (standard-deviation a))
+             (i/sq (standard-deviation b)))))
+
+(let [data (load-data "multiple-sites.tsv")
+      a (->> (i/$where {:site {:$eq 0}} data)
+             (i/$ :dwell-time))
+      b (->> (i/$where {:site {:$eq 6}} data)
+             (i/$ :dwell-time))]
+  (/ (- (s/mean b)
+        (s/mean a))
+     (pooled-standard-deviation a b)))
+#+END_SRC  
+
+Values above 0.5 are typically considered large, so .38 is a moderate effect. 
