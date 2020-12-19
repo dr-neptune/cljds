@@ -1,0 +1,228 @@
+#+TITLE: Correlation
+
+* Inspecting the Data
+
+#+BEGIN_SRC clojure
+(defn athlete-data []
+  (-> (io/resource "all-london-2012-athletes.xlsx")
+      (str)
+      (xls/read-xls)))
+
+(i/view (athlete-data))
+#+END_SRC
+
+* Visualizing the Data
+
+First we see how the heights are spread, removing nil values first
+  
+#+BEGIN_SRC clojure
+(defn show-hist-freq [var]
+  (-> (remove nil? (i/$ var (athlete-data)))
+      (c/histogram :nbins 20
+                   :x-label var
+                   :y-label "Frequency")
+      (i/view)))
+
+(show-hist-freq "Height, cm")
+(show-hist-freq "Weight")
+#+END_SRC
+
+We see evidence of a pronounced skew in the weight.
+
+#+BEGIN_SRC clojure
+;; look into skewness
+(->> (swimmer-data)
+     (i/$ "Weight")
+     (remove nil?)
+     (s/skewness))
+
+(defn show-skewness [data var]
+  (->> (data)
+       (i/$ var)
+       (remove nil?)
+       (s/skewness)))
+
+(show-skewness swimmer-data "Weight")
+(show-skewness swimmer-data "Height, cm")
+(show-skewness athlete-data "Weight")
+(show-skewness athlete-data "Height, cm")
+
+;; this skew can be mitigated by taking the log of the weight
+(-> (remove nil? (i/$ "Weight" (athlete-data)))
+    (i/log)
+    (c/histogram :nbins 20
+                 :x-label "log(Weight)"
+                 :y-label "Frequency")
+    (i/view))
+#+END_SRC
+
+This suggest that weight is distributed according to a log-normal distribution.
+
+* The log-Normal Distribution
+
+  The log-normal distribution is simply the distribution of a set of values whose logarithm is normally distributed. It tends to occur is processes of growth where the growth rate is independent of size. This is known as Gibrat's law.
+
+* Visualizing Correlation
+
+#+BEGIN_SRC clojure
+(defn swimmer-data []
+  (->> (athlete-data)
+       (i/$where {"Height, cm" {:$ne nil}
+                  "Weight" {:$ne nil}
+                  "Sport" {:$eq "Swimming"}})))
+
+(let [data (swimmer-data)
+      heights (i/$ "Height, cm" data)
+      weights (i/log (i/$ "Weight" data))]
+  (-> (c/scatter-plot heights weights
+                      :x-label "Height, cm"
+                      :y-label "Weight")
+      (i/view)))
+#+END_SRC
+
+* Jittering
+
+#+BEGIN_SRC clojure
+(defn jitter [limit]
+  (fn [x]
+    (let [amount (- (rand (* 2 limit)) limit)]
+      (+ x amount))))
+
+(let [data (swimmer-data)
+      heights (->> (i/$ "Height, cm" data)
+                   (map (jitter 0.5)))
+      weights (->> (i/$ "Weight" data)
+                   (map (jitter 0.5))
+                   (i/log))]
+  (-> (c/scatter-plot heights weights
+                      :x-label "Height, cm"
+                      :y-label "Weight")
+      (i/view)))
+#+END_SRC
+
+* Covariance
+
+This measures the tendency of two variables to change together
+
+$cov(X, Y) = \frac{1}{n}\sum_{i = 1}^n dx_i dy_i$
+
+#+BEGIN_SRC clojure
+(defn covariance2 [xs ys]
+  (let [x-bar (s/mean xs)
+        y-bar (s/mean ys)
+        dx (map (fn [x] (- x x-bar)) xs)
+        dy (map (fn [y] (- y y-bar)) ys)]
+    (s/mean (map * dx dy))))
+
+(let [data (swimmer-data)
+      heights (i/$ "Height, cm" data)
+      weights (-> (i/$ "Weight" data)
+                  (i/log))]
+  (covariance2 heights weights))
+#+END_SRC
+
+The covariance has units which are a product of the units of the inputs, making it hard to interpret. As a result, covariance is rarely used as a summary statistic on its own. A solution is to divide the deviations by the product of the standard deviations. This transforms the units to standard scores and constrains the output to a number between -1 and 1. The result is called Pearson's Correlation
+
+* Pearson's Correlation
+
+Pearson's correlation is often given by the variable name $r$ and is calculated as
+
+$r = \frac{1}{n} \sum_{i = 1}^n \frac{dx_i dy_i}{\sigma_x \sigma_y} = \frac{cov(X, Y)}{\sigma_x \sigma_y}$
+
+#+BEGIN_SRC clojure
+(defn pcorrelation [x y]
+  (/ (covariance x y)
+     (* (standard-deviation x)
+        (standard-deviation y))))
+
+(pcorrelation (i/$ "Height, cm" (swimmer-data))
+              (i/log (i/$ "Weight" (swimmer-data))))
+#+END_SRC
+
+* Hypothesis Testing
+
+In the previous chapter, we used hypothesis testing as a means to quantify the probability that a given hypothesis is true. We will use this same process to quantify the probability that a correlation exists in the wider population based on our sample.
+
+We will formulate 2 hypotheses:
+
+$H_0 : \rho = 0$ or the population correlation is 0 and our measured correlation is purely due to chance
+$H_1 : \rho \neq 0$ the population correlation is not 0
+
+The standard error of the sample $r$ is given by $SE_r = \sqrt{\frac{1 - p^2}{n - p^2}}$
+
+We can make use of the t-distribution to calculate our t-statistic:
+
+$t = r \sqrt{\frac{df}{1 - r^2}}$
+
+#+BEGIN_SRC clojure
+(defn t-stat [x y]
+  (let [r (correlation x y)
+        r-squared (* r r)
+        df (- (count x) 2)]
+    (* r (i/sqrt (/ df (- 1 r-squared))))))
+
+(let [data (swimmer-data)
+      heights (i/$ "Height, cm" data)
+      weights (i/$ "Weight" data)
+      t-value (t-stat heights weights)
+      df (- (count heights) 2)
+      p (* 2 (s/cdf-t t-value :df df :lower-tail? false))]
+  (println "t-value" t-value)
+  (println "p-value" p))
+#+END_SRC
+
+* Confidence Intervals
+
+Having establishes that there is a correlation in the wider population, we might want to quantify the range of values we expect $\rho$ to lie within by calculating a confidence interval. A complication arises when trying to calculate the standard error of the correlation coefficient that didn't exist for the mean. Since the absolute value of $r$ cannot exceed 1, the distribution of possible samples of $r$ is skewed as $r$ approaches the limit of its range.
+
+Fortunately, a transformation called the *Fisher z-transformation* will stabilize the variance of $r$ throughout its range.
+
+The equation for the z-transformation is:
+
+$z_r = \frac{1}{2} \ln(\frac{1 + r}{1 - r})$
+
+and the standard error of $z$ is: 
+
+$SE_z = \frac{1}{\sqrt{n - 3}}$
+
+The process to calculate confidence intervals is to convert $r$ to $z$ using the z-transformation, compute a confidence interval in terms of $SE_z$ and then convert the confidence interval back to $r$.
+
+To calculate a confidence interval in terms of $SE_z$, we can take the number of standard deviations away from the mean that contains 95% of the area. 
+
+#+BEGIN_SRC clojure
+(defn critical-value [confidence ntails]
+  (let [lookup (- 1 (/ (- 1 confidence) ntails))]
+    (s/quantile-normal lookup)))
+
+(critical-value 0.95 2)
+#+END_SRC
+
+Then our 95% confidence interval in $z$ space for $\rho$ is given by:
+
+$z_{\mathrm{range}} = z_r \pm \mathrm{(critical value)} SE_z = \frac{1}{2} \ln(\frac{1 + r}{1 - r}) \pm (1.96) \frac{1}{\sqrt{n - 3}}$
+
+To convert these z-scores back to r-values, we use the inverse of the z-transformation:
+
+$r = \frac{e^{2z} - 1}{e^{2z} + 1}$
+
+#+BEGIN_SRC clojure
+(defn z->r2 [z]
+  (/ (- (i/exp (* 2 z)) 1)
+     (+ (i/exp (* 2 z)) 1)))
+
+(defn r-confidence-interval2 [crit x y]
+  (let [r (correlation x y)
+        n (count x)
+        zr (* 0.5 (i/log (/ (+ 1 r)
+                            (- 1 r))))
+        sez (/ 1 (i/sqrt (- n 3)))]
+    [(z->r (- zr (* crit sez)))
+     (z->r (+ zr (* crit sez)))]))
+
+(let [data (swimmer-data)
+      heights (i/$ "Height, cm" data)
+      weights (i/log (i/$ "Weight" data))
+      interval (r-confidence-interval 1.96 heights weights)]
+  (println "Confidence Interval (95%): " interval))
+#+END_SRC
+
