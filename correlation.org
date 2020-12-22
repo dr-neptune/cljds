@@ -226,3 +226,229 @@ $r = \frac{e^{2z} - 1}{e^{2z} + 1}$
   (println "Confidence Interval (95%): " interval))
 #+END_SRC
 
+* Regression
+
+In establishing a correlation, we have measured the strength and sign of a relationship, but not the slope. Knowing the expected rate of change for one variable given a unit change in the other is required in order to make predictions. 
+
+* Linear Equations
+
+$y = ax + b$
+
+#+BEGIN_SRC clojure
+(defn celsius->fahrenheit2 [x]
+  (+ 32 (* 1.8 x)))
+
+(celsius->fahrenheit2 10)
+
+(-> (c/function-plot celsius->fahrenheit -10 40
+                     :x-label "Celsius"
+                     :y-label "Fahrenheit")
+    (i/view))
+#+END_SRC
+
+* Residuals
+
+but actually $y = ax + b + \epsilon$ where $\epsilon = y - \hat{y}$
+
+If we select parameters for $a$ and $b$ that are not ideal, then the residuals for each $x$ will be larger than it needs to be. We wish to find $a, b$ such that we minimize the residuals $\epsilon$ across all values of $x, y$
+
+* Ordinary Least Squares
+
+We seek the coefficients that minimize the sum of the residual squares. This is called Ordinary Least Squares. The formula to calculate the slope of the regression like using OLS is: 
+
+$b = \frac{\sum_{i = 1}^n (x_i - \bar{x})(y_i - \bar{y})}{\sum_{i = 1}^n (x_i - \bar{x})^2} = \frac{cov(X, Y)}{var(X)}$
+
+The intercept is the term that allows a line of this slope to pass through the mean of both $X$ and $Y$: 
+
+$a = \bar{y} - b \bar{x}$
+
+* Slope and Intercept
+
+#+BEGIN_SRC clojure
+(defn slope [x y]
+  (/ (covariance x y)
+     (variance x)))
+
+(defn intercept [x y]
+  (- (s/mean y)
+     (* (slope x y)
+        (s/mean x))))
+
+(let [data (swimmer-data)
+      heights (i/$ "Height, cm" data)
+      weights (i/log (i/$ "Weight" data))
+      a (intercept heights weights)
+      b (slope heights weights)]
+  (println "Intercept: " a)
+  (println "Slope: " b))
+#+END_SRC
+
+* Interpretation
+
+The intercept value is the value of the dependent variable (log weight) when the independent variable (height) is 0. The slope value shows how much $y$ changes for each unit change in $x$. Our model suggests that each additional centimeter of height adds an average of 1.014 kg to the weight of our Olympic swimmers.
+
+* Visualization
+
+#+BEGIN_SRC clojure
+(defn regression-line [a b]
+  (fn [x]
+    (+ a (* b x))))
+
+(let [data (swimmer-data)
+      heights (->> (i/$ "Height, cm" data)
+                   (map (jitter 0.5)))
+      weights (i/log (i/$ "Weight" data))
+      a (intercept heights weights)
+      b (slope heights weights)]
+  (-> (c/scatter-plot heights weights
+                      :x-label "Height, cm"
+                      :y-label "log(Weight)")
+      (c/add-function (regression-line a b) 150 210)
+      (i/view)))
+
+;; calculate each residual
+(defn residuals [a b x y]
+  (let [estimate (regression-line a b)
+        residual (fn [x y]
+                   (- y (estimate x)))]
+    (map residual x y)))
+
+;; residual plot
+(let [data (swimmer-data)
+      heights (->> (i/$ "Height, cm" data)
+                   (map (jitter 0.5)))
+      weights (i/log (i/$ "Weight" data))
+      a (intercept heights weights)
+      b (slope heights weights)]
+  (-> (c/scatter-plot heights (residuals a b heights weights)
+                      :x-label "Height, cm"
+                      :y-label "log(Weight)")
+      (c/add-function (constantly 0) 150 210)
+      (i/view)))
+#+END_SRC
+
+* Assumptions
+
+The primary assumption of linear regression is that there is a linear relationship between the predictors and the dependent variable.
+
+In addition, we assume that the errors have 0 mean and constant variance. A residual plot allows us to quickly determine if this is the case.
+
+* Goodness of Fit and R-square
+
+We wish to quantify how good our model fits our data.
+
+$R^2 = 1 - \frac{var(\epsilon)}{var(Y)}$
+
+#+BEGIN_SRC clojure
+(defn r-squared [a b x y]
+  (let [r-var (variance (residuals a b x y))
+        y-var (variance y)]
+    (- 1 (/ r-var y-var))))
+
+(let [data (swimmer-data)
+      heights (i/$ "Height, cm" data)
+      weights (i/log (i/$ "Weight" data))
+      a (intercept heights weights)
+      b (slope heights weights)]
+  (r-squared a b heights weights))
+#+END_SRC
+
+This returns .753. In other words, over 75% of the variance of the weight of 2012 Olympic Swimmers can be explained by the height.
+
+* Multiple Linear Regression
+
+$y = \beta_1 x_1 + \beta_2 x_2 + ... + \beta_n x_n + \epsilon$
+  
+* Matrices
+
+#+BEGIN_SRC clojure
+;; construct a matrix from a dataframe
+(->> (swimmer-data)
+     (i/$ ["Height, cm" "Weight"])
+     (i/to-matrix))
+
+;; matrix from a sequence
+(->> (swimmer-data)
+     (i/$ "Height, cm")
+     (i/matrix))
+#+END_SRC
+
+* Construction
+
+#+BEGIN_SRC clojure
+(defn add-bias2 [x]
+  (i/bind-columns (repeat (i/nrow x) 1) x))
+
+(->> (swimmer-data)
+     (i/$ "Height, cm")
+     (i/matrix)
+     (add-bias2))
+#+END_SRC
+
+* The Normal Equation
+
+This is the equation that calculates the coefficients of a multivariate OLS linear regression model:
+
+$\beta = (X^T X)^{-1} X^Ty$
+
+#+BEGIN_SRC clojure
+(defn normal-eqn [x y]
+  (let [xtx (i/mmult (i/trans x) x)
+        xtxi (i/solve xtx)
+        xty (i/mmult (i/trans x) y)]
+    (i/mmult xtxi xty)))
+
+(let [data (swimmer-data)
+      x (i/matrix (i/$ "Height, cm" data))
+      y (i/matrix (i/log (i/$ "Weight" data)))]
+  (normal-equation (add-bias x) y))
+#+END_SRC
+
+* More Features
+
+#+BEGIN_SRC clojure
+(defn feature-matrix [col-names dataset]
+  (-> (i/$ col-names dataset)
+      (i/to-matrix)))
+
+(feature-matrix ["Height, cm" "Age"] (swimmer-data))
+
+(let [data (swimmer-data)
+      x (->> data
+             (feature-matrix ["Height, cm" "Age"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))]
+  (normal-equation x y))
+#+END_SRC
+
+* Multiple R-Squared
+
+Since the variance is the mean squared error, we can multiply both the $var(\epsilon)$ and $var(y)$ terms by the sample size and arrive at the following equation for $R^2$ 
+
+$R^2 = 1 - \frac{\sum (y - \hat{y})}{\sum y - \bar{y}}$
+  
+#+BEGIN_SRC clojure
+(defn r-squared2 [coefs x y]
+  (let [fitted (i/mmult x coefs)
+        residuals (i/minus y fitted)
+        differences (i/minus y (s/mean y))
+        rss (i/sum-of-squares residuals)
+        ess (i/sum-of-squares differences)]
+    (- 1 (/ rss ess))))
+
+(let [data (swimmer-data)
+      x (->> (feature-matrix ["Height, cm" "Age"] data)
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)]
+  (r-squared beta x y))
+#+END_SRC
+
+* Adjusted R-squared
+
+
+
