@@ -1,0 +1,376 @@
+#+TITLE: Tablecloth Documentation
+
+* Introduction
+
+#+BEGIN_SRC clojure
+(require '[tablecloth.api :as df])
+
+;; define a dataset
+(def DS (df/dataset {:V1 (take 9 (cycle [1 2]))
+                     :V2 (range 1 10)
+                     :V3 (take 9 (cycle [0.5 1.0 1.5]))
+                     :V4 (take 9 (cycle ["A" "B" "C"]))}))
+#+END_SRC
+
+* Dataset
+
+Dataset is a special type which can be considered as a map of columns implemented around tech.ml.datatype library. Each column can be considered as a named sequence of typed data.
+
+** Dataset Creation
+
+Dataset can be created from various of types of Clojure structures and files:
+
+- single values
+- sequence of maps
+- map of sequences or values
+- sequence of columns (taken from other dataset or created manually)
+- sequence of pairs
+- file types: raw/gzipped csv/tsv, json, xls(x) taken from local file system or URL
+- input stream
+
+api/dataset accepts:
+
+- data
+- options (see documentation of tech.ml.dataset/->dataset function for full list):
+  - :dataset-name - name of the dataset
+  - :num-rows - number of rows to read from file
+  - :header-row? - indication if first row in file is a header
+  - :key-fn - function applied to column names (eg. keyword, to convert column names to keywords)
+  - :separator - column separator
+  - :single-value-column-name - name of the column when single value is provided
+
+#+BEGIN_SRC clojure
+;; empty dataset
+(df/dataset)
+
+;; single value
+(df/dataset 999)
+
+;; set column name for single value
+(df/dataset 999 {:single-value-column-name "my-single-value"})
+
+;; set dataset name
+(df/dataset 999 {:single-value-column-name "my-single-value"
+                 :dataset-name "Single Value"})
+
+;; sequence of pairs. First = col name, Second = values
+(df/dataset [[:A 33]
+             [:B 5]
+             [:C :a]])
+
+;; non-sequential values are repeated row-count number of times
+(df/dataset [[:A [1 2 3 4 6 7]]
+             [:B "X"]
+             [:C :a]])
+
+(df/dataset [[:A (take 5000 (cycle [1 2 3 4 5]))]
+             [:B "X"]
+             [:C :a]])
+
+;; dataset created from map. keys = colnames, vals = values
+(df/dataset {:A 33})
+(df/dataset {:A [1 2 3]})
+(df/dataset {:A [3 4 5]
+             :B "X"})
+
+;; you can put any value inside a column
+(df/dataset {:A [[3 4 5]
+                 [:a :b]]
+             :B "X"})
+
+;; sequence of maps
+(df/dataset [{:a 1 :b 3}
+             {:b 2 :a 99}])
+
+(df/dataset [{:a 1 :b [1 2 3]}
+             {:a 2 :b [3 4]}])
+
+;; missing values are maked by nil
+(df/dataset [{:a nil :b 1}
+             {:a 3 :b 4}
+             {:a 11}])
+
+;; import local csv file
+(df/dataset "data/seattle-weather.csv")
+
+;; import from url
+(defonce ds (df/dataset "https://vega.github.io/vega-lite/examples/data/seattle-weather.csv"))
+#+END_SRC
+
+** Saving
+
+   Exporting a dataset to a file or output stream can be done by calling df/write!
+
+   The function accepts:
+   - a dataset
+   - a filename with an extension in [.csv .tsv .csv.gz .tsv.gz] or output stream
+   - options: :separator -string or separator char
+   
+#+BEGIN_SRC clojure
+;; save tsv.gz file
+(df/write! ds "output.tsv.gz")
+
+;; check that it exists
+(.exists (clojure.java.io/file "output.tsv.gz"))
+
+;; Nippy file
+(df/write! ds "output.nippy.gz")
+(df/dataset "output.nippy.gz")
+#+END_SRC
+
+** Dataset related functions
+
+   Summary functions
+
+#+BEGIN_SRC clojure
+;; nrow
+(df/row-count ds)
+
+;; ncol
+(df/column-count ds)
+
+;; shape of the dataset
+(df/shape ds)
+
+;; general info about the dataset
+(df/info ds)
+(df/info ds :basic)
+(df/info ds :columns)
+
+;; getting a dataset name
+(df/dataset-name ds)
+
+;; setting a dataset name (operation is immutable)
+(->> "seattle-weather"
+     (df/set-dataset-name ds)
+     (df/dataset-name))
+#+END_SRC
+
+** Columns and Rows
+
+Get columns and rows as sequences. column, columns, and rows treat grouped datasets as regular ones.
+   
+#+BEGIN_SRC clojure
+;; select column
+(ds "wind")
+(df/column ds "date")
+
+;; columns as sequence
+(take 2 (df/columns ds))
+
+;; columns as map
+(keys (df/columns ds :as-map))
+
+;; rows as sequences of sequences
+(take 2 (df/rows ds))
+
+;; rows as sequences of maps
+(clojure.pprint/pprint (take 2 (df/rows ds :as-maps)))
+#+END_SRC
+
+** Printing
+
+   Dataset is printed using dataset->str or print-dataset functions. The most important is :print-line-policy which can be one of the :single, :repl, or :markdown
+
+#+BEGIN_SRC clojure
+;; markdown
+(df/print-dataset (df/group-by DS :V1)
+                  {:print-line-policy :markdown})
+
+;; single. hides grouped details
+(df/print-dataset (df/group-by DS :V1)
+                  {:print-line-policy :single})
+
+;; repl. Shows nested dataframes
+(df/print-dataset (df/group-by DS :V1)
+                  {:print-line-policy :repl})
+#+END_SRC
+
+
+
+* Group-by
+
+Grouping is done by calling group-by function with arguments
+
+- ds | dataset
+- grouping-selector | what to use for grouping
+- options
+  - :result-type | what to return
+    - :as-dataset | return grouped dataset
+    - :as-indexes | return row ids (row number from original dataset)
+    - :as-map | return map with group names as keys and subdatasets as values
+    - :as-seq | return sequence of subdatasets
+  - :select-keys | list of the columns passed to a grouping selector function
+
+Grouping can be done by:
+
+- single column name
+- seq of column names
+- map of keys (group names) and row indexes
+- value return by function taking row as map (limited to :select-keys)
+
+** Grouping
+
+#+BEGIN_SRC clojure
+;; list of columns in a grouped dataset
+(-> DS
+    (df/group-by :V1)
+    (df/column-names))
+
+;; list of columns in a grouped dataset treated as a regular dataset
+(-> DS
+    (df/group-by :V1)
+    (df/as-regular-dataset)
+    (df/column-names))
+
+;; content of the grouped dataset
+(-> DS
+    (df/group-by :V1)
+    (df/columns :as-map))
+
+;; grouped dataset as map. keys
+(-> DS
+    (df/group-by :V1 {:result-type :as-map})
+    keys)
+
+;; vals
+(-> DS
+    (df/group-by :V1 {:result-type :as-map})
+    vals)
+
+;; group dataset as map of indexes (row ids)
+(-> DS
+    (df/group-by :V1 {:result-type :as-indexes}))
+
+;; grouped datasets are printed as follows by default:
+(-> DS
+    (df/group-by :V1))
+
+;; to get groups as sequence or a map can be done from a grouped dataset using groups->seq and groups->map functions
+(let [ds (-> {"a" [1 1 2 2]
+              "b" ["a" "b" "c" "d"]}
+             (df/dataset)
+             (df/group-by "a"))]
+  (seq (ds :data)))
+
+(-> {"a" [1 1 2 2]
+     "b" ["a" "b" "c" "d"]}
+    (df/dataset)
+    (df/group-by "a")
+    (df/groups->seq))
+
+;; groups as map
+(-> {"a" [1 1 2 2]
+     "b" ["a" "b" "c" "d"]}
+    (df/dataset)
+    (df/group-by "a")
+    (df/groups->map))
+
+;; grouping by more than one column. Group names are maps. When ungrouping these maps are used to restore column names
+(-> DS
+    (df/group-by [:V1 :V3]
+                 {:result-type :as-seq}))
+
+;; grouping can be done by providing just row indexes. This way you can assign the same row to more than one group
+(-> DS
+    (df/group-by {"group-a" [1 2 1 2]
+                  "group-b" [5 5 5 1]}
+                 {:result-type :as-seq}))
+
+;; you can group by a result of a grouping function which gets row as map and should return group name.
+;; when a map is used as a group name, ungrouping restores original column names
+(-> DS
+    (df/group-by (fn [row]
+                   (* (:V1 row)
+                      (:V3 row)))
+                 {:result-type :as-seq}))
+
+;; you can use any predicate on a column to split a dataset into 2 groups
+(-> DS
+    (df/group-by (comp #(< % 1.0) :V3)
+                 {:result-type :as-seq}))
+
+;; juxt is also helpful
+(-> DS
+    (df/group-by (juxt :V1 :V3)
+                 {:result-type :as-seq}))
+
+;; tech.ml.dataset provides an option to limit columns which are passed to grouping functions
+(-> DS
+    (df/group-by identity {:result-type :as-seq
+                           :select-keys [:V1]}))
+#+END_SRC
+
+** Ungrouping
+
+   Ungrouping simply concats all the groups into the dataset.
+   
+   The following options are possible:
+   - :order? | order groups according to the group name ascending order
+   - :add-group-as-column | should group name become a column? if yes, create column with provided name
+   - :add-group-id-as-column | should group id become a column?
+   - :dataset-name | name resulting dataset
+
+#+BEGIN_SRC clojure
+;; grouping and ungrouping
+(-> DS
+    (df/group-by :V3)
+    (df/ungroup))
+
+;; groups sorted by group name and named
+(-> DS
+    (df/group-by :V3)
+    (df/ungroup {:order? true
+                 :dataset-name "Ordered by V3"}))
+
+;; groups sorted descending by group name and named
+(-> DS
+    (df/group-by :V3)
+    (df/ungroup {:order? :desc
+                 :dataset-name "Ordered by V3 descending"}))
+
+;; add group name and id as additional columns
+(-> DS
+    (df/group-by (comp #(< % 4) :V2))
+    (df/ungroup {:add-group-as-column true
+                 :add-group-id-as-column true}))
+
+;; assign different column names
+(-> DS
+    (df/group-by (comp #(< % 4) :V2))
+    (df/ungroup {:add-group-as-column "Is V2 less than 4?"
+                 :add-group-id-as-column "group id"}))
+
+;; if we group by map, we can automatically create new columns out of group names
+(-> DS
+    (df/group-by (fn [row]
+                   {"V1 and V3 multiplied" (* (:V1 row)
+                                              (:V3 row))
+                    "V4 as lowercase" (clojure.string/lower-case (:V4 row))}))
+    (df/ungroup {:add-group-as-column true}))
+
+;; we can add group names without separation
+(-> DS
+    (df/group-by (fn [row]
+                   {"V1 and V3 multiplied" (* (:V1 row)
+                                              (:V3 row))
+                    "V4 as lowercase" (clojure.string/lower-case (:V4 row))}))
+    (df/ungroup {:add-group-as-column true
+                 :separate? false}))
+
+;; the same applies to group names as sequences
+(-> DS
+    (df/group-by (juxt :V1 :V3))
+    (df/ungroup {:add-group-as-column "abc"}))
+
+;; lets provide column names
+(-> DS
+    (df/group-by (juxt :V1 :V3))
+    (df/ungroup {:add-group-as-column ["v1" "v3"]}))
+
+;; we can supress separation
+(-> DS
+    (df/group-by (juxt :V1 :V3))
+    (df/ungroup {:separate? false
+                 :add-group-as-column true}))
+#+END_SRC
