@@ -450,5 +450,274 @@ $R^2 = 1 - \frac{\sum (y - \hat{y})}{\sum y - \bar{y}}$
 
 * Adjusted R-squared
 
+Adjusted $R^2$ is like $R^2$ but it will only increase if the new independent variable increases $R^2$ more than would be expected due to chance. 
+  
+#+BEGIN_SRC clojure
+(defn matrix-adj-r-squared [coefs x y]
+  (let [r-squared (matrix-r-squared coefs x y)
+        n (count y)
+        p (count coefs)]
+    (- 1
+       (* (- 1 r-squared)
+          (/ (dec n)
+             (dec (- n p)))))))
 
+(let [data (swimmer-data)
+      x (->> (feature-matrix ["Height, cm" "Age"] data)
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)]
+  (adj-r-squared beta x y))
+#+END_SRC
+
+* The F-test of Model Significance
+
+  The F-test is appropriate when performing multiple significance tests at once. In the case of multiple linear regression, we are testing whether any of the coefficients of the model are statistically indistinguishable from 0
+
+$H_0 : \theta_1 = ... = \theta_n = 0$
+$H_1 : \theta_j \neq 0$
+
+The F-statistic we calculate is the ratio of explained variance over the unexplained (residual) variance. This can be expressed as the *mean square model (MSM)* over the *mean square error (MSE)*.
+
+$F = \frac{\mathrm{MSM}}{\mathrm{MSE}}$
+
+The MSM is equal to the explained sum of squares divided by the model degree of freedom (the number of parameters in the model minus the intercept term).
+The MSE is equal to the sum of residual squares divided by the residual degree of freedom (the size of the sample minus the # of model parameters).
+  
+#+BEGIN_SRC clojure
+(defn f-test2 [y x]
+  (let [coefs (normal-equation x y)
+        fitted (i/mmult x coefs)
+        difference (i/minus fitted (s/mean y))
+        residuals (i/minus y fitted)
+        ess (i/sum-of-squares difference)
+        rss (i/sum-of-squares residuals)
+        p (i/ncol x)
+        n (i/nrow y)
+        df1 (- p 1)
+        df2 (- n p)
+        msm (/ ess df1)
+        mse (/ rss df2)
+        f-stat (/ msm mse)]
+    (s/cdf-f f-stat :df1 df1 :df2 df2 :lower-tail? false)))
+
+(let [data (swimmer-data)
+      x (->> (feature-matrix ["Height, cm" "Age"] data)
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log))
+      beta (:coefs (s/linear-model y x :intercept false))]
+  (f-test beta x y))
+
+(let [data (->> (swimmer-data)
+                (i/$ ["Height, cm", "Age"])
+                (i/to-matrix))
+      x (i/sel data :cols 0)
+      y (i/sel data :cols 1)]
+  (s/linear-model y x))
+#+END_SRC
+
+* Categorical and Dummy Variables
+
+  OLS relies on a numerical value of residual distance to minimize.
+
+#+BEGIN_SRC clojure
+(defn dummy-mf [sex]
+  (if (= sex "F")
+    0.0 1.0))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Age"
+                              "Dummy MF"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)]
+  (adj-r-squared beta x y))
+#+END_SRC
+
+* Relative Power
+
+In order to compare the relative contributions of the coefficients, we can calculate the standardized regression coefficient, or beta weight:
+  
+$\beta_{i(adj)} = \beta_i \frac{\sigma x_i}{\sigma y}$
+
+To calculate beta weight, we multiply each coefficient by the ratio of the standard deviations for the associated independent variable and the model's dependent variable. ,
+
+#+BEGIN_SRC clojure
+(defn beta-weight [coefs x y]
+  (let [sdx (map s/sd (i/trans x))
+        sdy (s/sd y)]
+    (map #(/ (* %1 %2) sdy) sdx coefs)))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Age"
+                              "Dummy MF"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)]
+  (beta-weight beta x y))
+#+END_SRC
+
+* Collinearity
+
+#+BEGIN_SRC clojure
+(defn to-year [str]
+  (-> (coerce/from-date str)
+      (time/year)))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf)
+                (i/add-derived-column "Year of Birth"
+                                      ["Date of Birth"]
+                                      to-year))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Age"
+                              "Dummy MF"
+                              "Year of Birth"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)]
+  (beta-weight beta x y))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Year of Birth"
+                                      ["Date of Birth"]
+                                      to-year))
+      x (->> (i/$ "Age" data)
+             (map (jitter 0.5)))
+      y (i/$ "Year of Birth" data)]
+  (-> (c/scatter-plot x y
+                      :x-label "Age"
+                      :y-label "Year of Birth")
+      (i/view)))
+#+END_SRC
+
+* Prediction
+
+#+BEGIN_SRC clojure
+(defn predict [coefs x]
+  (-> (i/trans coefs)
+      (i/mmult x)
+      (first)))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf)
+                (i/add-derived-column "Year of Birth"
+                                      ["Date of Birth"]
+                                      to-year))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Age"
+                              "Dummy MF"
+                              "Year of Birth"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)
+      xspitz (i/matrix [1.0 183 1 1950])]
+     (i/exp (predict beta xspitz)))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf)
+                (i/add-derived-column "Year of birth"
+                                      ["Date of birth"]
+                                      to-year))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Age"
+                              "Dummy MF"
+                              "Year of birth"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      coefs (i/matrix [6.9 0.011 0.097 0.002])]
+  (predict coefs x))
+#+END_SRC
+
+* The Confidence Interval of a Prediction
+
+$\hat{y_p} \pm t_{\alpha / 2, n - p} \sqrt{\sigma^2 (1 + x_p^T ((X^T X)^{-1}) x_p)}$
+  
+#+BEGIN_SRC clojure
+(defn prediction-interval [x y a]
+  (let [xtx (i/mmult (i/trans x) x)
+        xtxi (i/solve xtx)
+        xty (i/mmult (i/trans x) y)
+        coefs (i/mmult xtxi xty)
+        fitted (i/mmult x coefs)
+        resid (i/minus y fitted)
+        rss (i/sum-of-squares resid)
+        n (i/nrow y)
+        p (i/ncol x)
+        dfe (- n p)
+        mse (/ ssr dfe)
+        se-y (first (i/mmult (i/trans a) xtxi a))
+        t-stat (i/sqrt (* mse (+ 1 se-y)))])
+  (* (s/quantile-t 0.975 :df dfe) t-stat))
+
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf)
+                (i/add-derived-column "Year of birth"
+                                      ["Date of birth"]
+                                      to-year))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Dummy MF"
+                              "Year of birth"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      xspitz (i/matrix [1.0 183 1 1950])]
+  (i/exp (prediction-interval x y xspitz)))
+#+END_SRC
+
+* The Final Model
+
+#+BEGIN_SRC clojure
+(let [data (->> (swimmer-data)
+                (i/add-derived-column "Dummy MF"
+                                      ["Sex"]
+                                      dummy-mf))
+      x (->> data
+             (feature-matrix ["Height, cm"
+                              "Dummy MF"
+                              "Age"])
+             (add-bias))
+      y (->> (i/$ "Weight" data)
+             (i/log)
+             (i/matrix))
+      beta (normal-equation x y)
+      xspitz (i/matrix [1.0 185 1 22])]
+  (i/exp (predict beta xspitz)))
+#+END_SRC
 
