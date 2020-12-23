@@ -374,3 +374,352 @@ Grouping can be done by:
     (df/ungroup {:separate? false
                  :add-group-as-column true}))
 #+END_SRC
+
+** Other Functions
+
+#+BEGIN_SRC clojure
+;; check if a dataset it grouped or not
+(df/grouped? DS)
+
+(-> DS
+    (df/group-by :V1)
+    (df/grouped?))
+
+;; remove grouping annotations (to make all the functions work as with a regular dataset)
+(-> DS
+    (df/group-by :V1)
+    (df/as-regular-dataset)
+    (df/grouped?))
+
+;; implement your own mapping function on a grouped dataset
+(-> DS
+    (df/group-by :V1)
+    (df/process-group-data #(str "Shape: " (vector (df/row-count %)
+                                                   (df/column-count %))))
+    (df/as-regular-dataset))
+#+END_SRC
+
+* Columns
+
+Column is a special tech.ml.dataset structure based on the tech.ml.datatype library. For our purposes, we can treat columns as typed and named sequences bound to a particular dataset.
+
+** Names
+
+   To select dataset columns or column names `column-selector` is used. It can be one of the following:
+
+   - :all | select all columns
+   - column name | particular column
+   - sequence of column names
+   - regex | apply pattern on column names or datatype
+   - filter predicate
+   - type 
+
+   column-names function returns names according to columns-selector and an optional :meta-field which is one of the following:
+
+   - :name | operate on column names
+   - :datatype | operate on column types
+   - : all | process all the metadata
+     
+#+BEGIN_SRC clojure
+;; select all columns
+(-> DS
+    (df/column-names :all))
+
+;; if you want to select a column named 'all'
+(-> DS
+    (df/column-names [:all]))
+
+;; select a single column
+(-> DS
+    (df/column-names :V1))
+
+;; select a sequence
+(-> DS
+    (df/column-names [:V1 "V2" :V3 :V4 :V5]))
+
+;; select names based on a regex
+(-> DS
+    (df/column-names #".*[14]"))
+
+;; regex operating on type of the column
+(-> DS
+    (df/column-names #"^:int.*" :datatype))
+
+(-> DS
+    (df/column-names :type/integer))
+
+;; use a predicate to select names
+(-> DS
+    (df/column-names #{:float64} :datatype))
+
+(-> DS
+    (df/column-names :type/float64))
+
+;; select complement
+(-> DS
+    (df/column-names (complement #{:V1})))
+
+(-> DS
+    (df/column-names (complement #{:float64}) :datatype))
+
+(-> DS
+    (df/column-names :!type/float64))
+
+;; select based on column metadata. column names ending with 1 which have the long datatype
+(-> DS
+    (df/column-names (fn [meta]
+                       (and (= :int64 (:datatype meta))
+                            (clojure.string/ends-with? (:name meta) "1"))) :all))
+#+END_SRC
+
+** Select
+
+#+BEGIN_SRC clojure
+;; select only float64 columns
+(-> DS
+    (df/select-columns #(= :float64 %) :datatype))
+
+(-> DS
+    (df/select-columns :type/float64))
+
+;; select all but
+(-> DS
+    (df/select-columns (complement #{:V1})))
+
+;; in grouped datasets, column selection is applied to every group separately
+(-> DS
+    (df/group-by :V1)
+    (df/select-columns [:V2 :V3])
+    (df/groups->map))
+#+END_SRC
+
+** Drop
+
+#+BEGIN_SRC clojure
+;; drop float64 columns
+(-> DS
+    (df/drop-columns #(= :float64 %) :datatype))
+
+(-> DS
+    (df/drop-columns :type/float64))
+
+;; drop all columns but
+(-> DS
+    (df/drop-columns (complement #{:V1 :V2})))
+
+;; on a grouped dataset, column selection is applied to every group separately
+(-> DS
+    (df/group-by :V1)
+    (df/drop-columns [:V2 :V3])
+    (df/groups->map))
+#+END_SRC
+
+** Rename
+
+   If you want to rename columns, use `rename-columns` and pass a map where the keys are old names, values are new ones
+
+#+BEGIN_SRC clojure
+;; rename in action
+(-> DS
+    (df/rename-columns {:V1 "v1"
+                        :V2 "v2"
+                        :V3 [1 2 3]
+                        :V4 (Object.)}))
+
+;; map all names with a function
+(-> DS
+    (df/rename-columns (comp str second name)))
+
+;; map selected names with function
+(-> DS
+    (df/rename-columns [:V1 :V3] (comp str second name)))
+
+;; on a grouped dataset
+(-> DS
+    (df/group-by :V1)
+    (df/rename-columns {:V1 "v1"
+                        :V2 "v2"
+                        :V3 [1 2 3]
+                        :V4 (Object.)})
+    (df/groups->map))
+#+END_SRC
+
+** Add or Update
+
+   To add (or replace an existing) column, call `add-or-replace-column`
+
+   It accepts:
+   - ds | dataset
+   - column name
+   - column
+   - size-strategy
+   - :cycle | repeat data
+   - :na | append missing values
+   - :strict | throw an exception when sizes mismatch
+
+#+BEGIN_SRC clojure
+;; add a single value column
+(-> DS
+    (df/add-or-replace-column :V5 "X"))
+
+;; replace one column
+(-> DS
+    (df/add-or-replace-column :V1 (repeatedly rand)))
+
+;; duplicate column
+(-> DS
+    (df/add-or-replace-column :V5 (DS :V1)))
+
+;; when a function is used, the default arg is the whole dataset and the result should be a column, seq, or single value
+(-> DS
+    (df/add-or-replace-column :row-count df/row-count))
+
+;; on a grouped dataset
+(-> DS
+    (df/group-by :V1)
+    (df/add-or-replace-column :row-count df/row-count)
+    (df/ungroup))
+
+;; when a column is longer than row count in a dataset, the column is trimmed
+;; when it is shorted, its cycled or missing values are appended
+(-> DS
+    (df/add-or-replace-column :V5 [:r :b]))
+
+(-> DS
+    (df/add-or-replace-column :V5 [:r :b] :na))
+
+;; an exception is thrown when :strict strategy is used and colsize != row count
+(try
+  (-> DS
+      (df/add-or-replace-column :V5 [:r :b] :strict))
+  (catch Exception e (str "Exception caught: " (ex-message e))))
+
+;; the same applies for a grouped dataset
+(-> DS
+    (df/group-by :V3)
+    (df/add-or-replace-column :V5 [:r :b] :na)
+    (df/ungroup))
+
+;; we can use other columns to fill groups
+(-> DS
+    (df/group-by :V3)
+    (df/add-or-replace-column :V5 (DS :V2))
+    (df/ungroup))
+
+;; if you want to add or update several columns
+(-> DS
+    (df/add-or-replace-columns {:V1 #(map inc (% :V1))
+                                :V5 #(map (comp keyword str) (% :V4))
+                                :V6 11}))
+#+END_SRC
+
+** Update
+
+   If you want to modify specific columns you can call `update-columns` with args:
+   - dataset
+   - either columns-selector and a function (seq or fns) or a map where the keys are colnames and vals are functions
+
+#+BEGIN_SRC clojure
+;; reverse columns
+(-> DS
+    (df/update-columns :all reverse))
+
+;; apply dec / inc on numerical columns
+(-> DS
+    (df/update-columns :type/numerical [(partial map dec)
+                                        (partial map inc)]))
+
+We can also assign a funciton to a column by packing operations into the map
+
+(-> DS
+    (df/update-columns {:V1 reverse
+                        :V2 (comp shuffle seq)}))
+#+END_SRC
+
+** Map
+
+   Another way of creating or updating columns is to map rows as regular map functions.
+
+#+BEGIN_SRC clojure
+;; add numerical columns together
+(-> DS
+    (df/map-columns :sum-of-numbers
+                    (df/column-names DS #{:int64 :float64} :datatype)
+                    (fn [& rows]
+                      (reduce + rows))))
+
+;; also works on grouped datasets
+(-> DS
+    (df/group-by :V4)
+    (df/map-columns :sum-of-numbers
+                    (df/column-names DS #{:int64 :float64} :datatype)
+                    (fn [& rows]
+                      (reduce + rows)))
+    (df/ungroup))
+#+END_SRC
+
+** Reorder
+
+#+BEGIN_SRC clojure
+;; unselected columns are pushed to the end
+(-> DS
+    (df/reorder-columns :V4 [:V3 :V2]))
+
+;; add integer columns to the end
+(-> DS
+    (df/reorder-columns (df/column-names DS (complement #{:int64}) :datatype)))
+#+END_SRC
+
+** Type Conversion
+
+#+BEGIN_SRC clojure
+;; basic type conversion
+(-> DS
+    (df/convert-types :V1 :float64)
+    (df/info :columns))
+
+;; custom converter. Treat :V4 as a hexadecimal value
+(-> DS
+    (df/convert-types :V4 [[:int16 #(Integer/parseInt % 16)]]))
+
+;; several columns at once
+(-> DS
+    (df/convert-types {:V1 :float64
+                       :V2 :object
+                       :V3 [:boolean #(< % 1.0)]
+                       :V4 :object})
+    (df/info :columns))
+
+;; convert one type into another
+(-> DS
+    (df/convert-types :type/numerical :int16)
+    (df/info :columns))
+
+;; also works on a grouped dataset
+(-> DS
+    (df/group-by :V1)
+    (df/convert-types :V1 :float32)
+    (df/ungroup)
+    (df/info :columns))
+
+;; double array conversion
+(-> DS
+    (df/->array :V1))
+
+;; also works on a grouped dataset
+(-> DS
+    (df/group-by :V3)
+    (df/->array :V2))
+
+;; type casting
+(-> DS
+    (df/->array :V4 :string))
+
+(-> DS
+    (df/->array :V1 :float32))
+#+END_SRC
+
+* Rows
+
+
+
