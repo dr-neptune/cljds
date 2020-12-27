@@ -1,0 +1,232 @@
+#+TITLE: Oz Data Visualization with Vega+Vega-lite
+
+* Starting
+
+#+BEGIN_SRC clojure
+(require '[oz/core :as oz])
+(oz/start-server!)
+#+END_SRC
+
+* Generate some data
+
+#+BEGIN_SRC clojure
+(defn play-data [& names]
+  (for [n names
+        i (range 20)]
+    {:time i
+     :item n
+     :quantity (+ (Math/pow (* i (count n)) 0.8)
+                  (rand-int (count n)))
+     :happiness (+ (Math/pow (* i (count n)) 0.9)
+                   (rand-int (count n)))}))
+#+END_SRC
+
+* Viewing
+
+  The main function for displaying vega or vega-lite is oz/view!
+
+#+BEGIN_SRC clojure
+(def line-plot
+  {:data {:values (play-data "monkey" "slipper" "broom")}
+   :encoding {:x {:field "time"
+                  :type "quantitative"}
+              :y {:field "quantity"
+                  :type "quantitative"}
+              :color {:field "item"
+                      :type "nominal"}}
+   :mark "line"})
+
+(oz/view! line-plot)
+
+;; another example
+(def stacked-bar
+  {:data {:values (play-data "munchkin" "witch" "dog" "lion" "tiger" "bear")}
+   :mark "bar"
+   :encoding {:x {:field "time"
+                  :type "ordinal"}
+              :y {:aggregate "sum"
+                  :field "quantity"
+                  :type "quantitative"}
+              :color {:field "item"
+                      :type "nominal"}}})
+
+(oz/view! stacked-bar)
+
+;; hand spun example
+(play-data "cow")
+
+;; from https://vega.github.io/editor/#/examples/vega-lite/bar
+
+;; simple bar chart
+(def simple-bar-chart
+  {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
+   :mark "bar"
+   :encoding {:x {:field "time"
+                  :type "quantitative"
+                  :axis {:labelAngle 0}}
+              :y {:field "quantity"
+                  :type "quantitative"
+                  :aggregate "sum"}
+              :color {:field "item"
+                      :type "nominal"}}})
+
+(oz/view! simple-bar-chart)
+
+;; responsive bar chart
+(def responsive-bar-chart
+  {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
+   :width 500
+   :height 250
+   :mark "bar"
+   :title "Cow Plot"
+   :encoding {:x {:field "item"
+                  :title "Type of Happy Cow"}
+              :y {:aggregate "count"
+                  :field "quantity"
+                  :type "quantitative"
+                  :title "Number of Happy Cows"}
+              :color {:field "item"
+                      :type "nominal"}}})
+
+(oz/view! responsive-bar-chart)
+
+;; aggregate bar chart
+(def aggregate-bar-chart
+  {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
+   :description "This a bar chart that is showing how happy the cows are today"
+   :height {:step 17}
+   ;; :transform [{:filter "quantity > 2"}]
+   :mark "bar"
+   :encoding {:y {:field "item"}
+              :x {:aggregate "sum"
+                  :field "happiness"
+                  :title "Sum of Cow Happiness"}
+              :color {:field "item"
+                      :type "nominal"}}})
+
+(oz/view! aggregate-bar-chart)
+
+;; interactive bar chart with highlight hovering and selection on click
+(def interactive-bar-chart
+  {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
+   :description "A bar chart with highlighting on hover and selection on click"
+   :width 500
+   :height 500
+   :selection {:highlight {:type "single"
+                           :empty "none"
+                           :on "mouseover"}
+               :select {:type "multi"}}
+   :mark {:type "bar"
+          :fill "#4C78A8"
+          :stroke "black"
+          :cursor "pointer"}
+   :encoding {:x {:field "item"
+                  :type "nominal"}
+              :y {:field "happiness"
+                  :type "quantitative"
+                  :aggregate "sum"}
+              :fillOpacity {:condition {:selection "select"
+                                        :value 1}
+                            :value 0.5}
+              :value 0
+              }
+   :config {:scale {:bandPaddingInner 0.2}}})
+
+(oz/view! interactive-bar-chart)
+
+;; interactive average
+(def interactive-average-chart
+  {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
+   :layer [{:selection {:brush {:type "interval"
+                                :encodings ["x"]}}
+            :mark "bar"
+            :encoding {:x {;; :timeUnit ""
+                           :field "time"
+                           :type "ordinal"}
+                       :y {:aggregate "mean"
+                           :field "happiness"
+                           :type "quantitative"}
+                       :opacity {:condition {:selection "brush"
+                                             :value 1}
+                                 :value 0.7}}}
+           {:transform [{:filter {:selection "brush"}}]
+            :mark "rule"
+            :encoding {:y {:aggregate "mean"
+                           :field "happiness"
+                           :type "quantitative"}
+                       :color {:value "firebrick"}
+                       :size {:value 3}}}]})
+
+(oz/view! interactive-average-chart)
+
+#+END_SRC
+
+
+
+* Vega Support
+
+  For vega instead of vega lite we could specify :mode :vega to oz/view!
+
+#+BEGIN_SRC clojure
+(require '[cheshire.core :as json])
+
+(def contour-plot
+  (oz/load "https://raw.githubusercontent.com/metasoarous/oz/master/resources/oz/examples/vega/contour-lines.vega.json"))
+
+(oz/view! contour-plot :mode :vega)
+#+END_SRC
+
+* Hiccup
+
+We can also embed vega-lite and vega visualizations within hiccup documents
+  
+#+BEGIN_SRC clojure
+(def viz
+  [:div
+   [:h1 "Look ye and behold"]
+   [:p "A couple of small charts"]
+   [:div {:style {:display "flex" :flex-direction "row"}}
+    [:vega-lite line-plot]
+    [:vega-lite stacked-bar]]
+   [:p "A wider, more expansive chart"]
+   [:vega contour-plot]
+   [:h2 "If ever, oh ever there was, the vizard of oz is one because, because, because..."]
+   [:p "Because of the wonderful things it does"]])
+
+(oz/view! viz)
+#+END_SRC
+
+* Export
+
+  We can also export static html files using Vega-Embed to render interactive vega/vega-lite visualizations
+
+#+BEGIN_SRC clojure
+(oz/export! viz "test.html")
+#+END_SRC
+
+* Live Code Reloading
+
+  Oz features figwheel like hot code reloading
+
+#+BEGIN_SRC clojure
+(oz/live-reload! "example-viz.clj")
+#+END_SRC
+
+#+BEGIN_SRC clojure :tangle example-viz.clj
+;; here is an example string
+(require '[oz/core :as oz])
+
+(def viz
+  [:div
+   [:h1 "Look ye and behold"]
+   [:p "A couple of small charts"]
+   [:div {:style {:display "flex" :flex-direction "row"}}
+    [:vega-lite line-plot]
+    [:vega-lite stacked-bar]]
+   [:p "A wider, more expansive chart"]
+   [:vega contour-plot]
+   [:h2 "If ever, oh ever there was, the vizard of oz is one because, because, because..."]
+   [:p "Because of the wonderful things it does"]])
+
+(oz/live-view! viz)
+#+END_SRC

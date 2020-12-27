@@ -721,5 +721,19 @@ We can also assign a funciton to a column by packing operations into the map
 
 * Rows
 
+  Rows can be selected or dropped using various selectors:
+
+  - row ids | row index as number or sequence of numbers
+  - sequence of TRUE / FALSE values
+  - filter by predicate (argument is row as a map)
+
+** Select
+    
+#+BEGIN_SRC clojure
+;; select fifth row
+(-> DS
+    (df/select-rows 4))
+
+#+END_SRC
 
 
