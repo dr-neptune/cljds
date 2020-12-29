@@ -12,51 +12,33 @@
 #+BEGIN_SRC clojure
 (defn play-data [& names]
   (for [n names
-        i (range 20)]
-    {:time i
+        i (range 24)]
+    {;; ordinal variable
+     :time i
+     ;; nominal
      :item n
+     ;; some quantitative variables
+     ;; continuous
      :quantity (+ (Math/pow (* i (count n)) 0.8)
                   (rand-int (count n)))
-     :happiness (+ (Math/pow (* i (count n)) 0.9)
-                   (rand-int (count n)))}))
+     ;; discrete
+     :happiness (Math/floor (+ (Math/pow (* i (count n)) 0.9)
+                               (rand-int (count n))))
+     ;; add a grouping variable
+     :gender (if (= (mod (+ (rand-int i)) 2) 1)
+               "male"
+               "female")}))
+
+(take 10 (play-data "cow"))
 #+END_SRC
 
-* Viewing
+* Vega-Lite Documentation
 
-  The main function for displaying vega or vega-lite is oz/view!
+These plots are the result of me trying to translate the plots [[https://vega.github.io/vega-lite/examples/][here]] into Oz.
+
+** Bar Plots
 
 #+BEGIN_SRC clojure
-(def line-plot
-  {:data {:values (play-data "monkey" "slipper" "broom")}
-   :encoding {:x {:field "time"
-                  :type "quantitative"}
-              :y {:field "quantity"
-                  :type "quantitative"}
-              :color {:field "item"
-                      :type "nominal"}}
-   :mark "line"})
-
-(oz/view! line-plot)
-
-;; another example
-(def stacked-bar
-  {:data {:values (play-data "munchkin" "witch" "dog" "lion" "tiger" "bear")}
-   :mark "bar"
-   :encoding {:x {:field "time"
-                  :type "ordinal"}
-              :y {:aggregate "sum"
-                  :field "quantity"
-                  :type "quantitative"}
-              :color {:field "item"
-                      :type "nominal"}}})
-
-(oz/view! stacked-bar)
-
-;; hand spun example
-(play-data "cow")
-
-;; from https://vega.github.io/editor/#/examples/vega-lite/bar
-
 ;; simple bar chart
 (def simple-bar-chart
   {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
@@ -106,6 +88,59 @@
 
 (oz/view! aggregate-bar-chart)
 
+;; grouped bar chart
+(def grouped-bar-chart
+  {:data {:values cow-data}
+   :description "This is a grouped bar chart"
+   :height 200
+   ;; :width 400
+   :mark "bar"
+   :encoding {:column {:field "time"
+                       :type "ordinal"
+                       :spacing 10}
+              :y {:aggregate "sum"
+                  :field "happiness"
+                  :title "Cow Happiness"
+                  :axis {:grid false}}
+              :x {:field "gender"
+                  :axis {:title ""}}
+              :color {:field "gender"
+                      :scale {:range ["#675193" "#ca8861"]}}}
+   :config {:view {:stroke "transparent"}
+            :axis {:domainWidth 1}}})
+
+(oz/view! grouped-bar-chart)
+
+
+;; stacked bar chart
+(def stacked-bar-chart
+  {:data {:values cow-data}
+   :mark "bar"
+   :encoding {:x {;; :timeUnit 24
+                  :field "time"
+                  :type "ordinal"
+                  :title "Month"}
+              :y {:aggregate "sum"
+                  :field "happiness"
+                  :type "quantitative"}
+              :color {:field "item"
+                      :type "nominal"
+                      :title "Cow Type"}}})
+
+(oz/view! stacked-bar-chart)
+
+;; view data
+(take 4 cow-data)
+
+(def cow-data (take 100 (play-data "brown cow"
+                                   "blue cow"
+                                   "red cow"
+                                   "moo cow")))
+#+END_SRC
+
+*** Interactive Bar Plots
+
+#+BEGIN_SRC clojure
 ;; interactive bar chart with highlight hovering and selection on click
 (def interactive-bar-chart
   {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
@@ -158,6 +193,38 @@
                        :size {:value 3}}}]})
 
 (oz/view! interactive-average-chart)
+#+END_SRC
+
+* Viewing
+
+  The main function for displaying vega or vega-lite is oz/view!
+
+#+BEGIN_SRC clojure
+(def line-plot
+  {:data {:values (play-data "monkey" "slipper" "broom")}
+   :encoding {:x {:field "time"
+                  :type "quantitative"}
+              :y {:field "quantity"
+                  :type "quantitative"}
+              :color {:field "item"
+                      :type "nominal"}}
+   :mark "line"})
+
+(oz/view! line-plot)
+
+(def stacked-bar
+  {:data {:values (play-data "munchkin" "witch" "dog" "lion" "tiger" "bear")}
+   :mark "bar"
+   :encoding {:x {:field "time"
+                  :type "ordinal"}
+              :y {:aggregate "sum"
+                  :field "quantity"
+                  :type "quantitative"}
+              :color {:field "item"
+                      :type "nominal"}}})
+
+(oz/view! stacked-bar)
+
 
 #+END_SRC
 
