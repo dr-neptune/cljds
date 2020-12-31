@@ -122,12 +122,37 @@ These plots are the result of me trying to translate the plots [[https://vega.gi
                   :title "Month"}
               :y {:aggregate "sum"
                   :field "happiness"
-                  :type "quantitative"}
+                  :type "p"}
               :color {:field "item"
                       :type "nominal"
                       :title "Cow Type"}}})
 
 (oz/view! stacked-bar-chart)
+
+;; stacked bar chart with rounded corners
+(def stacked-bar-chart-rounded-corners
+  {:data {:values cow-data}
+   :mark {:type "bar"
+          :cornerRadiusTopLeft 3
+          :cornerRadiusTopRight 3}
+   :encoding {:x {:field "time"
+                  :type "ordinal"
+                  :title "Month"}
+              :y {:aggregate "sum"
+                  :field "happiness"}
+              :color {:field "item"}}})
+
+(oz/view! stacked-bar-chart-rounded-corners)
+
+(def horizontal-stacked-bar-chart
+  {:data {:values cow-data}
+   :mark "bar"
+   :encoding {:x {:aggregate "sum"
+                  :field "happiness"}
+              :y {:field "item"}
+              :color {:field "item"}}})
+
+(oz/view! horizontal-stacked-bar-chart)
 
 ;; view data
 (take 4 cow-data)
@@ -193,6 +218,66 @@ These plots are the result of me trying to translate the plots [[https://vega.gi
                        :size {:value 3}}}]})
 
 (oz/view! interactive-average-chart)
+#+END_SRC
+
+** Histograms
+
+#+BEGIN_SRC clojure
+
+(defn play-data [& names]
+  (for [n names
+        i (range 24)]
+    {;; ordinal variable
+     :time i
+     ;; nominal
+     :item n
+     ;; some quantitative variables
+     ;; continuous
+     :quantity (+ (Math/pow (* i (count n)) 0.8)
+                  (rand-int (count n)))
+     ;; discrete
+     :happiness (Math/floor (+ (Math/pow (* i (count n)) 0.9)
+                               (rand-int (count n))))
+     ;; add a grouping variable
+     :gender (if (= (mod (+ (rand-int i)) 2) 1)
+               "male"
+               "female")}))
+
+(require '[clojure.data.generators :as gen])
+
+(let [rep-it ((partial gen/reps 5) (fn [x] x))
+      bools (rep-it #(gen/boolean))
+      nums (rep-it #(gen/double))
+      ]
+  {:bools bools
+   :nums nums})
+
+(((partial gen/reps 10) (fn [x] x)) gen/char)
+
+((fn [x] ((partial gen/reps 10) x)) #(gen/char))
+
+(let [rep (fn [x] ((partial gen/reps 10) x))
+      ;; booleans
+      bools (rep #(gen/boolean))
+      ;; cow types
+      cows (rep #(gen/one-of "brown cow" "blue cow" "green cow"))
+      ;; quantitatives
+      happiness (rep #(+ 1 (mod (gen/int) 10))) ;; int
+      fullness (rep #(format "%.2f" (gen/double))) ;; proportion
+      leaves-eaten (rep #(* 1000 (gen/double))) ;; double
+      ;; time / ordinals
+      days (rep #(gen/one-of 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20))]
+  {:bools bools
+   :cows cows
+   :happiness happiness
+   :fullness fullness
+   :leaves leaves-eaten
+   :days days})
+
+(gen/one-of "a" "b" "c")
+
+(gen/reps 10 #(gen/boolean))
+
 #+END_SRC
 
 * Viewing
