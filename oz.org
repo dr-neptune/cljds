@@ -10,26 +10,18 @@
 * Generate some data
 
 #+BEGIN_SRC clojure
-(defn play-data [& names]
-  (for [n names
-        i (range 24)]
-    {;; ordinal variable
-     :time i
-     ;; nominal
-     :item n
-     ;; some quantitative variables
-     ;; continuous
-     :quantity (+ (Math/pow (* i (count n)) 0.8)
-                  (rand-int (count n)))
-     ;; discrete
-     :happiness (Math/floor (+ (Math/pow (* i (count n)) 0.9)
-                               (rand-int (count n))))
-     ;; add a grouping variable
-     :gender (if (= (mod (+ (rand-int i)) 2) 1)
-               "male"
-               "female")}))
+(def cow-data
+  (for [i (range 100)]
+    {:bools (gen/boolean)
+     :cows (gen/one-of "brown cow" "blue cow" "green cow" "purple cow" "orange cow")
+     :happiness (+ 1 (mod (gen/int) 10))
+     :fullness (format "%.2f" (gen/double))
+     :leaves (format "%.2f" (* 1000 (gen/double)))
+     :grass (format "%.2f" (* 888 (gen/double)))
+     :days (gen/one-of 1 2 3 4 5 6 7 8 9 10)
+     :date (gen/date)}))
 
-(take 10 (play-data "cow"))
+(take 10 cow-data)
 #+END_SRC
 
 * Vega-Lite Documentation
@@ -41,16 +33,15 @@ These plots are the result of me trying to translate the plots [[https://vega.gi
 #+BEGIN_SRC clojure
 ;; simple bar chart
 (def simple-bar-chart
-  {:data {:values (play-data "brown cow" "white cow" "black cow" "blue cow" "gray cow")}
+  {:data {:values cow-data}
    :mark "bar"
-   :encoding {:x {:field "time"
+   :encoding {:x {:field "days"
                   :type "quantitative"
                   :axis {:labelAngle 0}}
-              :y {:field "quantity"
-                  :type "quantitative"
-                  :aggregate "sum"}
-              :color {:field "item"
-                      :type "nominal"}}})
+              :y {:aggregate "sum"
+                  :field "happiness"
+                  :type "quantitative"}
+              :color {:field "cows"}}})
 
 (oz/view! simple-bar-chart)
 
@@ -223,62 +214,114 @@ These plots are the result of me trying to translate the plots [[https://vega.gi
 ** Histograms
 
 #+BEGIN_SRC clojure
+(take 5 cow-data)
 
-(defn play-data [& names]
-  (for [n names
-        i (range 24)]
-    {;; ordinal variable
-     :time i
-     ;; nominal
-     :item n
-     ;; some quantitative variables
-     ;; continuous
-     :quantity (+ (Math/pow (* i (count n)) 0.8)
-                  (rand-int (count n)))
-     ;; discrete
-     :happiness (Math/floor (+ (Math/pow (* i (count n)) 0.9)
-                               (rand-int (count n))))
-     ;; add a grouping variable
-     :gender (if (= (mod (+ (rand-int i)) 2) 1)
-               "male"
-               "female")}))
+;; histogram
+(def hist
+  {:data {:values cow-data}
+   :mark "bar"
+   :height 500
+   :width 700
+   :encoding {:x {:bin {:binned true
+                        :step 1}
+                  :field "happiness"
+                  :type "quantitative"}
+              :y {:aggregate "count"}
+              :color {:field "cows"}}})
 
-(require '[clojure.data.generators :as gen])
+(oz/view! hist)
 
-(let [rep-it ((partial gen/reps 5) (fn [x] x))
-      bools (rep-it #(gen/boolean))
-      nums (rep-it #(gen/double))
-      ]
-  {:bools bools
-   :nums nums})
+;; log scaled histogram
+(def lshist
+  {:data {:values cow-data}
+   ;; :transform [{:calculate "log(datum.x)/log(10)", :as "log_x"}
+   ;;             {:bin "true"
+   ;;              :field "log_x"
+   ;;              :as "bin_log_x"}]
+   :mark "bar"
+   :encoding {:x {:field "happiness"
+                  :scale {:type "log"
+                          :base 10}
+                  :axis {:tickCount 10}}
+              :y {:aggregate "count"}}})
 
-(((partial gen/reps 10) (fn [x] x)) gen/char)
+(oz/view! lshist)
 
-((fn [x] ((partial gen/reps 10) x)) #(gen/char))
+;; stacked density estimates
+(def sdens
+  {:data {:values cow-data}
+   :width 500
+   :height 400
+   :mark "area"
+   :transform [{:density "leaves"
+                :groupby ["cows"]
+                :extent [0 1000]}]
+   :encoding {:x {:field "value"
+                  :type "quantitative"
+                  :title "Amount of Leaves Eaten (kg)"}
+              :y {:field "density"
+                  :type "quantitative"
+                  :stack "zero"}
+              :color {:field "cows"
+                      :type "nominal"
+                      :scale {:scheme "pastel1"}}}})
 
-(let [rep (fn [x] ((partial gen/reps 10) x))
-      ;; booleans
-      bools (rep #(gen/boolean))
-      ;; cow types
-      cows (rep #(gen/one-of "brown cow" "blue cow" "green cow"))
-      ;; quantitatives
-      happiness (rep #(+ 1 (mod (gen/int) 10))) ;; int
-      fullness (rep #(format "%.2f" (gen/double))) ;; proportion
-      leaves-eaten (rep #(* 1000 (gen/double))) ;; double
-      ;; time / ordinals
-      days (rep #(gen/one-of 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20))]
-  {:bools bools
-   :cows cows
-   :happiness happiness
-   :fullness fullness
-   :leaves leaves-eaten
-   :days days})
+(oz/view! sdens)
 
-(gen/one-of "a" "b" "c")
+;; 2d histogram heatmap
+(def hmap
+  {:data {:values cow-data}
+   :transform [{:filter {:and [{:field "grass" :valid true}
+                               {:field "leaves" :valid true}]}}]
+   :mark "rect"
+   :width 500
+   :height 500
+   :encoding {:x {:bin {:maxbins 10}
+                  :field "grass"
+                  :type "quantitative"}
+              :y {:bin {:maxbins 10}
+                  :field "leaves"
+                  :type "quantitative"}
+              :color {:aggregate "count"
+                      :type "quantitative"}}
+   :config {:view {:stroke "transparent"}}})
 
-(gen/reps 10 #(gen/boolean))
+(oz/view! hmap)
 
+;; layered histogram and cumulative histogram
+(def lchist
+  {:data {:values cow-data}
+   :width 500
+   :height 400
+   :title "Moo-ve Over"
+   :transform [{:bin true
+                :field "happiness"
+                :as "bin_happiness"}
+               {:aggregate [{:op "count" :as "count"}]
+                :groupby ["bin_happiness" "bin_happiness_end"]}
+               {:field "datum.bin_happiness !== null"}
+               {:sort [{:field "bin_happiness"}]
+                :window [{:op "sum"
+                          :field "count"
+                          :as "Cumulative Count"}]
+                :frame [nil, 0]}]
+   :encoding {:x {:field "bin_happiness"
+                  :type "quantitative"
+                  :scale {:zero false}
+                  :title "Happiness"}
+              :x2 {:field "bin_happiness_end"}}
+   :layer [{:mark "bar"
+            :encoding {:y {:field "Cumulative Count"
+                           :type "quantitative"}}}
+           {:mark {:type "bar"
+                   :color "yellow"
+                   :opacity 0.5}
+            :encoding {:y {:field "count"
+                           :type "quantitative"}}}]})
+
+(oz/view! lchist)
 #+END_SRC
+
 
 * Viewing
 
@@ -312,7 +355,6 @@ These plots are the result of me trying to translate the plots [[https://vega.gi
 
 
 #+END_SRC
-
 
 
 * Vega Support
