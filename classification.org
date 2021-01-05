@@ -1,0 +1,44 @@
+#+TITLE: Chapter 4 : Classification
+
+#+BEGIN_SRC clojure
+;; start viz server
+(oz/start-server!)
+#+END_SRC
+
+* Inspecting the Data
+
+#+BEGIN_SRC clojure
+(defn csv->df
+  ([csv-path]
+  (-> (with-open [reader (io/reader csv-path)]
+        (doall
+         (csv/read-csv reader)))
+      csv-data->maps
+      (df/dataset)))
+  ([csv-path delim]
+   (-> (with-open [reader (io/reader csv-path)]
+         (doall
+          (csv/read-csv reader :separator delim)))
+       csv-data->maps
+       (df/dataset))))
+
+(def titanic (csv->df "data/titanic.tsv" \tab))
+#+END_SRC
+
+We can construct a frequency table, showing how the counts of passengers in each of the groups
+
+#+BEGIN_SRC clojure
+(-> titanic
+    (df/group-by [:sex :survived])
+    (df/aggregate {:N df/row-count}))
+
+(defn tally
+  [data group-cols]
+  (let [sumn (df/row-count data)]
+    (-> data
+        (df/group-by group-cols)
+        (df/aggregate {:n df/row-count})
+        (df/add-or-replace-column :propn #(/ (% :n) 2)))))
+
+(tally titanic [:sex :survived])
+#+END_SRC
