@@ -24,29 +24,6 @@
        )))
 
 (def titanic (csv->df "data/titanic.tsv" \tab))
-
-(take 3 titanic)
-
-(map :pclass titanic)
-
-(map #(/ (map :fare %) (reduce + (map :fare %))) titanic)
-
-(->> (map #(:fare %) titanic)
-     (map double))
-
-(map read-string (map #(:fare %) titanic))
-
-(def strangs (map #(:fare %) titanic))
-
-(map #(Double/parseDouble %) strangs)
-
-(def strangs (list "1.22" "2.22 3.33"))
-
-(type (map #(:fare %) titanic))
-
-(apply read-string strangs)
-
-(map read-string strangs)
 #+END_SRC
 
 We can construct a frequency table, showing how the counts of passengers in each of the groups
@@ -56,23 +33,38 @@ We can construct a frequency table, showing how the counts of passengers in each
     (df/group-by [:sex :survived])
     (df/aggregate {:N df/row-count}))
 
+(->> (map :age titanic)
+     (map #(if (empty? %) "0" %))
+     (map read-string))
+
+(->> titanic
+     (map (comp int read-string #(if (empty? %) "0" %) :age)))
+
+(take 3 titanic)
+
+(->> titanic
+     (map (comp double read-string #(if (empty? %) "0" %) :fare)))
+
+(->> titanic
+     (filter #(= (:sex %) "female")))
+
+(->> titanic
+     (group-by :sex))
+
 (defn tally
   ([data group-cols]
    (-> data
        (df/group-by group-cols)
        (df/aggregate {:n df/row-count}))))
 
-(df/map-columns frequency-table 
-                :propn
-                (df/column-names frequency-table #{:int64 :float64} :datatype)
-                (fn [& rows]
-                  (/ (rows) 
-                     (reduce + rows))))
-
 (tally titanic [:sex :survived])
-
-(def frequency-table (tally titanic [:sex :survived]))
 #+END_SRC
+
+Need mapping
+Filtering
+Reducing
+Coercion
+group-by
 
 * Comparison with Relative Risk and Odds
 
